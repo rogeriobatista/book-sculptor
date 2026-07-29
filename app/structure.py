@@ -143,7 +143,7 @@ def detect_structure(blocks: list[str], source_path: str | Path) -> Book:
     if not heading_indices:
         body = [Paragraph(text=b) for b in cleaned if _keep_body(b)]
         chapters.append(Chapter(title="Conteúdo", paragraphs=body, number=1))
-        return Book(title=title, author=author, chapters=chapters, source_path=str(path))
+        return Book(title=title, author=author, chapters=chapters, source_path=str(path), kind="book")
 
     # Conteúdo antes do primeiro capítulo → prefácio / introdução
     first_heading = heading_indices[0]
@@ -174,7 +174,7 @@ def detect_structure(blocks: list[str], source_path: str | Path) -> Book:
             chapter.number = counter
         counter = max(counter, (chapter.number or 0) + 1)
 
-    return Book(title=title, author=author, chapters=chapters, source_path=str(path))
+    return Book(title=title, author=author, chapters=chapters, source_path=str(path), kind="book")
 
 
 SUPPORTED_SUFFIXES = {".pdf", ".docx"}
@@ -225,6 +225,50 @@ def list_chapter_files(folder: str | Path) -> list[Path]:
     return files
 
 
+def _chapter_from_blocks(
+    cleaned: list[str],
+    number: int | None,
+    chapter_title: str,
+) -> Chapter:
+    """Monta um capítulo a partir de blocos — sem tratar o arquivo como livro."""
+    body = list(cleaned)
+
+    if body and any(p.match(body[0]) for p in CHAPTER_PATTERNS):
+        parsed_num, parsed_title = _parse_chapter_title(body[0])
+        if parsed_num is not None:
+            number = parsed_num
+        if parsed_title:
+            chapter_title = parsed_title
+        body = body[1:]
+    elif body and body[0].lower() == chapter_title.lower():
+        body = body[1:]
+
+    return Chapter(
+        title=chapter_title,
+        paragraphs=[Paragraph(text=b) for b in body],
+        number=number,
+    )
+
+
+def build_chapter_from_file(file_path: str | Path) -> Book:
+    """Trata um arquivo isolado como conteúdo de um único capítulo (não como livro)."""
+    from app.extractors import extract_text
+
+    path = Path(file_path)
+    _, blocks = extract_text(path)
+    cleaned = [_normalize(b) for b in blocks if _normalize(b)]
+    number, chapter_title = _title_from_filename(path)
+    chapter = _chapter_from_blocks(cleaned, number, chapter_title)
+
+    return Book(
+        title=chapter.title,
+        author="",
+        chapters=[chapter],
+        source_path=str(path),
+        kind="chapter",
+    )
+
+
 def build_book_from_folder(folder: str | Path) -> Book:
     """Monta um livro onde cada arquivo da pasta é um capítulo."""
     from app.extractors import extract_text
@@ -242,31 +286,18 @@ def build_book_from_folder(folder: str | Path) -> Book:
     for index, file_path in enumerate(files, start=1):
         _, blocks = extract_text(file_path)
         cleaned = [_normalize(b) for b in blocks if _normalize(b)]
-
         number, chapter_title = _title_from_filename(file_path)
-
-        # Se o arquivo começa com cabeçalho de capítulo, usa esse título
-        if cleaned and any(p.match(cleaned[0]) for p in CHAPTER_PATTERNS):
-            parsed_num, parsed_title = _parse_chapter_title(cleaned[0])
-            if parsed_num is not None:
-                number = parsed_num
-            if parsed_title:
-                chapter_title = parsed_title
-            cleaned = cleaned[1:]
-        elif cleaned and cleaned[0].lower() == chapter_title.lower():
-            cleaned = cleaned[1:]
-
-        chapters.append(
-            Chapter(
-                title=chapter_title,
-                paragraphs=[Paragraph(text=b) for b in cleaned],
-                number=number if number is not None else index,
-            )
+        chapter = _chapter_from_blocks(
+            cleaned,
+            number if number is not None else index,
+            chapter_title,
         )
+        chapters.append(chapter)
 
     return Book(
         title=book_title,
         author="",
         chapters=chapters,
         source_path=str(path),
+        kind="book",
     )

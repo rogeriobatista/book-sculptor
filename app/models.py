@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Literal
+
+DocumentKind = Literal["book", "chapter"]
 
 
 @dataclass
@@ -22,6 +25,11 @@ class Book:
     author: str = ""
     chapters: list[Chapter] = field(default_factory=list)
     source_path: str = ""
+    kind: DocumentKind = "book"
+
+    @property
+    def is_chapter(self) -> bool:
+        return self.kind == "chapter"
 
     @property
     def chapter_count(self) -> int:
@@ -34,3 +42,7 @@ class Book:
             for paragraph in chapter.paragraphs:
                 total += len(paragraph.text.split())
         return total
+
+    @property
+    def primary_chapter(self) -> Chapter | None:
+        return self.chapters[0] if self.chapters else None
