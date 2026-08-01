@@ -5,35 +5,50 @@ from app.models import Book, Chapter
 
 
 def chapter_to_dict(chapter: Chapter, index: int) -> dict:
+    body_paras = [p for p in chapter.paragraphs if p.style == "body"]
+    sections = [p for p in chapter.paragraphs if p.style == "section"]
     snippet = ""
-    if chapter.paragraphs:
-        snippet = chapter.paragraphs[0].text[:220]
-        if len(chapter.paragraphs[0].text) > 220:
+    if body_paras:
+        snippet = body_paras[0].text[:220]
+        if len(body_paras[0].text) > 220:
             snippet += "…"
-    label = chapter.title
-    if chapter.number is not None and chapter.title != "Introdução":
-        label = f"{chapter.number} {chapter.title}"
+    elif chapter.paragraphs:
+        snippet = chapter.paragraphs[0].text[:220]
+
     return {
         "id": index,
         "title": chapter.title,
         "number": chapter.number,
-        "label": label,
-        "paragraph_count": len(chapter.paragraphs),
-        "word_count": sum(len(p.text.split()) for p in chapter.paragraphs),
+        "kind": chapter.kind,
+        "label": chapter.display_label if chapter.has_heading else (chapter.title or "Texto principal"),
+        "has_heading": chapter.has_heading,
+        "paragraph_count": len(body_paras),
+        "section_count": len(sections),
+        "word_count": sum(len(p.text.split()) for p in body_paras),
         "snippet": snippet,
+        "sections": [p.text for p in sections],
     }
 
 
 def book_to_dict(book: Book) -> dict:
-    numbered = sum(
-        1
-        for c in book.chapters
-        if c.title != "Introdução" and c.title != "Prefácio"
-    )
-    has_preface = any(c.title in {"Introdução", "Prefácio"} for c in book.chapters)
-    detection = f"Detectamos {numbered} capítulo{'s' if numbered != 1 else ''}"
-    if has_preface:
-        detection += " + prefácio"
+    chapters_n = sum(1 for c in book.chapters if c.kind == "chapter")
+    prologues = sum(1 for c in book.chapters if c.kind == "prologue")
+    epilogues = sum(1 for c in book.chapters if c.kind == "epilogue")
+    parts = book.section_count
+
+    parts_msg = []
+    if prologues:
+        parts_msg.append("prólogo" if prologues == 1 else f"{prologues} prólogos")
+    if chapters_n:
+        parts_msg.append(f"{chapters_n} capítulo{'s' if chapters_n != 1 else ''}")
+    if parts:
+        parts_msg.append(f"{parts} parte{'s' if parts != 1 else ''}")
+    if epilogues:
+        parts_msg.append("epílogo" if epilogues == 1 else f"{epilogues} epílogos")
+    if not parts_msg:
+        parts_msg.append(f"{book.chapter_count} divisão(ões)")
+
+    detection = "Detectamos " + " + ".join(parts_msg)
 
     return {
         "title": book.title,
@@ -42,7 +57,8 @@ def book_to_dict(book: Book) -> dict:
         "chapter_count": book.chapter_count,
         "word_count": book.word_count,
         "detection": detection,
-        "has_preface": has_preface,
+        "has_preface": prologues > 0 or any(c.title == "Introdução" for c in book.chapters),
+        "section_count": parts,
         "chapters": [chapter_to_dict(c, i) for i, c in enumerate(book.chapters)],
     }
 
@@ -88,7 +104,11 @@ def build_preview_pages(book: Book, settings: LayoutSettings) -> list[dict]:
             }
         )
 
-        if settings.include_toc:
+        has_named_divisions = any(
+            c.has_heading or any(p.style == "section" for p in c.paragraphs)
+            for c in book.chapters
+        )
+        if settings.include_toc and has_named_divisions:
             pages.append(
                 {
                     "type": "toc",
@@ -119,7 +139,7 @@ def build_preview_pages(book: Book, settings: LayoutSettings) -> list[dict]:
 
 def _title_page_html(book: Book, settings: LayoutSettings) -> str:
     author = f'<p class="author">{_esc(book.author)}</p>' if book.author else ""
-    rule = '<p class="title-rule">—</p>' if settings.style_id == "prosa_literaria" else ""
+    rule = '<p class="title-rule">* * *</p>' if settings.style_id == "prosa_literaria" else ""
     return (
         f'<div class="title-page literary">'
         f"<h1>{_esc(book.title)}</h1>"
@@ -132,13 +152,14 @@ def _title_page_html(book: Book, settings: LayoutSettings) -> str:
 def _toc_html(book: Book) -> str:
     items = []
     for chapter in book.chapters:
-        if chapter.number is not None and chapter.title not in {"Introdução", "Prefácio"}:
-            label = f"Capítulo {chapter.number} — {chapter.title}"
-        else:
-            label = chapter.title
-        items.append(f"<li>{_esc(label)}</li>")
+        if chapter.has_heading:
+            items.append(f"<li>{_esc(chapter.display_label)}</li>")
+        for para in chapter.paragraphs:
+            if para.style == "section":
+                items.append(f'<li class="toc-section">{_esc(para.text)}</li>')
+    if not items:
+        return '<div class="toc"><h1>Sumário</h1><p class="muted">Sem divisões nomeadas.</p></div>'
     return f'<div class="toc"><h1>Sumário</h1><ul>{"".join(items)}</ul></div>'
-
 
 def _paginate_chapter(
     chapter: Chapter,
@@ -161,7 +182,17 @@ def _paginate_chapter(
             pages.append("".join(current))
             current = []
             used = 0
-        cls = ' class="first"' if settings.skip_first_indent() and index == 0 else ""
+        if para.style == "section":
+            current.append('<p class="section-rule">. . .</p>')
+            current.append(f'<h2 class="section-title">{_esc(para.text)}</h2>')
+            used += 60
+            continue
+        # first indent: primeiro parágrafo de corpo após título/seção
+        is_first_body = settings.skip_first_indent() and (
+            index == 0
+            or (index > 0 and paragraphs[index - 1].style == "section")
+        )
+        cls = ' class="first"' if is_first_body else ""
         current.append(f"<p{cls}>{_esc(text)}</p>")
         used += cost
 
@@ -171,23 +202,35 @@ def _paginate_chapter(
 
 
 def _chapter_heading_html(chapter: Chapter, settings: LayoutSettings) -> str:
+    if not chapter.has_heading:
+        return ""
+
     literary = settings.style_id == "prosa_literaria"
-    ornament = '<p class="ornament">❧</p>' if settings.chapter_ornament() else ""
-    if chapter.number is not None and chapter.title not in {"Introdução", "Prefácio"}:
+    ornament = '<p class="ornament">* * *</p>' if settings.chapter_ornament() else ""
+
+    if chapter.kind == "prologue":
+        label = "Prólogo"
+    elif chapter.kind == "epilogue":
+        label = "Epílogo"
+    elif chapter.number is not None and chapter.kind == "chapter":
         label = f"Capítulo {chapter.number}" if literary else f"CAPÍTULO {chapter.number}"
-        return (
-            f'<div class="chapter-open">'
-            f'<p class="chapter-label">{label}</p>'
-            f"<h1 class='chapter-title'>{_esc(chapter.title)}</h1>"
-            f"{ornament}"
-            f"</div>"
-        )
-    return (
-        f'<div class="chapter-open">'
-        f"<h1 class='chapter-title'>{_esc(chapter.title)}</h1>"
-        f"{ornament}"
-        f"</div>"
-    )
+    else:
+        label = ""
+
+    title = chapter.title.strip()
+    if chapter.kind in {"prologue", "epilogue"} and title.lower() in {
+        "prólogo",
+        "prologo",
+        "epílogo",
+        "epilogo",
+    }:
+        title = ""
+    if label and title.lower().startswith(label.lower()):
+        title = title[len(label) :].strip(" —-.")
+
+    label_html = f'<p class="chapter-label">{_esc(label)}</p>' if label else ""
+    title_html = f"<h1 class='chapter-title'>{_esc(title)}</h1>" if title else ""
+    return f'<div class="chapter-open">{label_html}{title_html}{ornament}</div>'
 
 
 def _esc(text: str) -> str:

@@ -19,27 +19,48 @@ def _html_escape(text: str) -> str:
 
 def _chapter_html(chapter: Chapter, settings: LayoutSettings) -> tuple[str, str]:
     literary = settings.style_id == "prosa_literaria"
-    if chapter.number is not None and chapter.title not in {"Introdução", "Prefácio"}:
-        label = f"Capítulo {chapter.number}" if literary else f"CAPÍTULO {chapter.number}"
-        heading = (
-            f'<p class="chapter-label">{label}</p>'
-            f"<h1>{_html_escape(chapter.title)}</h1>"
-        )
+    heading = ""
+
+    if chapter.has_heading:
+        if chapter.kind == "prologue":
+            label = "Prólogo"
+        elif chapter.kind == "epilogue":
+            label = "Epílogo"
+        elif chapter.number is not None and chapter.kind == "chapter":
+            label = f"Capítulo {chapter.number}" if literary else f"CAPÍTULO {chapter.number}"
+        else:
+            label = ""
+
+        title = chapter.title
+        if chapter.kind in {"prologue", "epilogue"} and title.lower() in {
+            "prólogo",
+            "prologo",
+            "epílogo",
+            "epilogo",
+        }:
+            title = ""
+
+        if label:
+            heading += f'<p class="chapter-label">{label}</p>'
+        if title:
+            heading += f"<h1>{_html_escape(title)}</h1>"
         if settings.chapter_ornament():
-            heading += '<p class="ornament">❧</p>'
-        toc_label = f"Capítulo {chapter.number} — {chapter.title}"
-    else:
-        heading = f"<h1>{_html_escape(chapter.title)}</h1>"
-        if settings.chapter_ornament():
-            heading += '<p class="ornament">❧</p>'
-        toc_label = chapter.title
+            heading += '<p class="ornament">* * *</p>'
 
     paragraphs = []
     for index, p in enumerate(chapter.paragraphs):
-        cls = ' class="first"' if settings.skip_first_indent() and index == 0 else ""
+        if p.style == "section":
+            paragraphs.append('<p class="section-rule">. . .</p>')
+            paragraphs.append(f'<h2 class="section-title">{_html_escape(p.text)}</h2>')
+            continue
+        prev_section = index > 0 and chapter.paragraphs[index - 1].style == "section"
+        cls = (
+            ' class="first"'
+            if settings.skip_first_indent() and (index == 0 or prev_section)
+            else ""
+        )
         paragraphs.append(f"<p{cls}>{_html_escape(p.text)}</p>")
-    return toc_label, heading + "".join(paragraphs)
-
+    return chapter.display_label, heading + "".join(paragraphs)
 
 def _book_css(settings: LayoutSettings) -> str:
     font = settings.font().css_family
@@ -75,6 +96,21 @@ def _book_css(settings: LayoutSettings) -> str:
       color: #888;
       text-indent: 0 !important;
       margin: 0.2em 0 1.6em;
+    }}
+    .section-rule {{
+      text-align: center;
+      color: #aaa;
+      letter-spacing: 0.35em;
+      text-indent: 0 !important;
+      margin: 1.4em 0 0.3em;
+    }}
+    h2.section-title {{
+      text-align: center;
+      font-size: 1.08em;
+      font-weight: 600;
+      font-style: italic;
+      margin: 0.3em 0 1em;
+      text-indent: 0;
     }}
     p {{
       text-align: justify;
@@ -168,19 +204,26 @@ def export_epub(
     spine: list = ["nav", title_page]
     toc = []
 
-    if settings.include_toc:
+    has_named = any(
+        c.has_heading or any(p.style == "section" for p in c.paragraphs)
+        for c in book.chapters
+    )
+    if settings.include_toc and has_named:
         items = []
         for chapter in book.chapters:
-            if chapter.number is not None and chapter.title not in {"Introdução", "Prefácio"}:
-                label = f"Capítulo {chapter.number} — {chapter.title}"
-            else:
-                label = chapter.title
-            items.append(f"<li>{_html_escape(label)}</li>")
-        toc_page = epub.EpubHtml(title="Sumário", file_name="toc.xhtml", lang="pt")
-        toc_page.content = f"<h1>Sumário</h1><ul>{''.join(items)}</ul>"
-        toc_page.add_item(css)
-        ebook.add_item(toc_page)
-        spine.append(toc_page)
+            if chapter.has_heading:
+                items.append(f"<li>{_html_escape(chapter.display_label)}</li>")
+            for para in chapter.paragraphs:
+                if para.style == "section":
+                    items.append(
+                        f'<li style="margin-left:1.2em">{_html_escape(para.text)}</li>'
+                    )
+        if items:
+            toc_page = epub.EpubHtml(title="Sumário", file_name="toc.xhtml", lang="pt")
+            toc_page.content = f"<h1>Sumário</h1><ul>{''.join(items)}</ul>"
+            toc_page.add_item(css)
+            ebook.add_item(toc_page)
+            spine.append(toc_page)
 
     for index, chapter in enumerate(book.chapters):
         toc_label, content = _chapter_html(chapter, settings)

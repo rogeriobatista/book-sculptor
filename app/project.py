@@ -7,13 +7,13 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from app.extractors import extract_text
+from app.extractors import extract_blocks
 from app.layout import LayoutSettings
-from app.models import Book, Chapter
+from app.models import Book
 from app.structure import (
     _chapter_from_blocks,
-    _normalize,
     _title_from_filename,
+    build_chapter_from_file,
     detect_structure,
 )
 
@@ -91,45 +91,30 @@ def rebuild_book(project: ProjectState) -> Book:
         raise ValueError("Envie ao menos um arquivo do manuscrito.")
 
     if project.mode == "chapter":
-        file = project.files[0]
-        _, blocks = extract_text(file.path)
-        cleaned = [_normalize(b) for b in blocks if _normalize(b)]
-        number, title = _title_from_filename(Path(file.name))
-        chapter = _chapter_from_blocks(cleaned, number, title)
-        book = Book(
-            title=chapter.title,
-            author="",
-            chapters=[chapter],
-            source_path=str(file.path),
-            kind="chapter",
-        )
+        book = build_chapter_from_file(project.files[0].path)
     elif len(project.files) == 1:
         file = project.files[0]
-        _, blocks = extract_text(file.path)
-        # Usa o nome do arquivo como path "lógico" para o título fallback
+        blocks = extract_blocks(file.path)
         logical = Path(file.name)
         book = detect_structure(blocks, logical)
         stem = logical.stem.replace("_", " ").replace("-", " ").strip()
         stem = re.sub(r"^\d+\s*", "", stem).strip() or stem
         if not book.title or book.title.lower() in {"conteúdo", "content"}:
             book.title = stem
-        # Se o título detectado ainda parece frase de corpo, prefere o nome do arquivo
         if book.title.endswith((".", "!", "?")) and stem:
             book.title = stem
     else:
-        chapters: list[Chapter] = []
+        chapters = []
         for index, file in enumerate(project.files, start=1):
-            _, blocks = extract_text(file.path)
-            cleaned = [_normalize(b) for b in blocks if _normalize(b)]
+            blocks = extract_blocks(file.path)
             number, title = _title_from_filename(Path(file.name))
             chapter = _chapter_from_blocks(
-                cleaned,
+                blocks,
                 number if number is not None else index,
                 title,
             )
             chapters.append(chapter)
 
-        # Título a partir do nome do primeiro arquivo, sem prefixo numérico
         raw = Path(project.files[0].name).stem.replace("_", " ").replace("-", " ").strip()
         book_title = re.sub(r"^\d+\s*", "", raw).strip() or "Manuscrito"
         book = Book(
@@ -153,7 +138,7 @@ def reorder_chapters(project: ProjectState, order: list[int]) -> Book:
     project.book.chapters = [chapters[i] for i in order]
     n = 1
     for chapter in project.book.chapters:
-        if chapter.title in {"Introdução", "Prefácio"}:
+        if chapter.kind != "chapter":
             continue
         if chapter.number is not None:
             chapter.number = n

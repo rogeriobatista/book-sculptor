@@ -19,9 +19,53 @@ const state = {
   css: null,
   pageIndex: 0,
   chaptersOpen: true,
+  loadingDepth: 0,
 };
 
 const $ = (id) => document.getElementById(id);
+
+function setLoadingMessage(title, sub) {
+  const t = $("loadingTitle");
+  const s = $("loadingSub");
+  if (t) t.textContent = title;
+  if (s) s.textContent = sub;
+  const meta = $("toolbarMeta");
+  if (meta) meta.textContent = title;
+}
+
+function showLoading(title = "Processando…", sub = "Isso pode levar alguns segundos") {
+  state.loadingDepth += 1;
+  const overlay = $("loadingOverlay");
+  if (overlay) overlay.hidden = false;
+  setLoadingMessage(title, sub);
+  document.body.classList.add("is-loading");
+}
+
+function hideLoading() {
+  state.loadingDepth = Math.max(0, state.loadingDepth - 1);
+  if (state.loadingDepth > 0) return;
+  const overlay = $("loadingOverlay");
+  if (overlay) overlay.hidden = true;
+  document.body.classList.remove("is-loading");
+  updateChrome();
+}
+
+function clearLoading() {
+  state.loadingDepth = 0;
+  const overlay = $("loadingOverlay");
+  if (overlay) overlay.hidden = true;
+  document.body.classList.remove("is-loading");
+  updateChrome();
+}
+
+async function withLoading(title, sub, fn) {
+  showLoading(title, sub);
+  try {
+    return await fn();
+  } finally {
+    hideLoading();
+  }
+}
 
 async function api(path, options = {}) {
   const res = await fetch(path, options);
@@ -137,16 +181,14 @@ async function updateSetting(key, value) {
   state.settings[key] = value;
   renderOptions();
   if (!state.projectId) return;
-  await api(`/api/projects/${state.projectId}/settings`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(state.settings),
+  await withLoading("Aplicando ajustes…", "Atualizando a diagramação", async () => {
+    await api(`/api/projects/${state.projectId}/settings`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(state.settings),
+    });
+    if (state.book) await refreshPreview({ quiet: true });
   });
-  if (state.book) {
-    try {
-      await refreshPreview();
-    } catch (_) {}
-  }
 }
 
 async function applyStyle(styleId) {
@@ -158,16 +200,14 @@ async function applyStyle(styleId) {
   }
   renderOptions();
   if (!state.projectId) return;
-  await api(`/api/projects/${state.projectId}/settings`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(state.settings),
+  await withLoading("Aplicando estilo…", "Montando a tipografia do livro", async () => {
+    await api(`/api/projects/${state.projectId}/settings`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(state.settings),
+    });
+    if (state.book) await refreshPreview({ quiet: true });
   });
-  if (state.book) {
-    try {
-      await refreshPreview();
-    } catch (_) {}
-  }
 }
 
 async function ensureProject() {
@@ -233,7 +273,13 @@ function renderChapters() {
       <p class="chapter-snippet"></p>
     `;
     card.querySelector("strong").textContent = ch.label;
-    card.querySelector(".chapter-snippet").textContent = ch.snippet || "(sem texto)";
+    let snippet = ch.snippet || "(sem texto)";
+    if (ch.sections?.length) {
+      snippet = `${ch.sections.length} parte(s): ${ch.sections.slice(0, 2).join(" · ")}${
+        ch.sections.length > 2 ? "…" : ""
+      }\n${snippet}`;
+    }
+    card.querySelector(".chapter-snippet").textContent = snippet;
     card.querySelectorAll("[data-dir]").forEach((btn) => {
       btn.addEventListener("click", () => moveChapter(index, Number(btn.dataset.dir)));
     });
@@ -296,79 +342,95 @@ function renderPage() {
   $("nextPage").disabled = state.pageIndex >= state.pages.length - 1;
 }
 
-async function refreshPreview() {
+async function refreshPreview({ quiet = false } = {}) {
   if (!state.projectId || !state.book) return;
-  const data = await api(`/api/projects/${state.projectId}/preview`);
-  state.pages = data.pages;
-  state.css = data.css;
-  state.book = data.book;
-  state.diagnostic = data.diagnostic;
-  state.files = data.files;
-  renderFiles();
-  renderChapters();
-  renderDiagnostic();
-  renderPage();
+  const run = async () => {
+    const data = await api(`/api/projects/${state.projectId}/preview`);
+    state.pages = data.pages;
+    state.css = data.css;
+    state.book = data.book;
+    state.diagnostic = data.diagnostic;
+    state.files = data.files;
+    renderFiles();
+    renderChapters();
+    renderDiagnostic();
+    renderPage();
+  };
+  if (quiet) return run();
+  return withLoading("Atualizando prévia…", "Gerando as páginas do livro", run);
 }
 
 async function uploadFiles(fileList, replace = false) {
   if (!fileList?.length) return;
-  await ensureProject();
+  const names = [...fileList].map((f) => f.name).join(", ");
+  await withLoading(
+    "Carregando manuscrito…",
+    names ? `Lendo ${names}` : "Lendo e detectando capítulos",
+    async () => {
+      await ensureProject();
 
-  if (replace && state.files.length) {
-    // create a fresh project when "trocar manuscrito"
-    state.projectId = null;
-    state.files = [];
-    state.book = null;
-    state.pages = [];
-    await ensureProject();
-  }
+      if (replace && state.files.length) {
+        state.projectId = null;
+        state.files = [];
+        state.book = null;
+        state.pages = [];
+        await ensureProject();
+      }
 
-  const body = new FormData();
-  [...fileList].forEach((f) => body.append("files", f));
-  const data = await api(`/api/projects/${state.projectId}/files`, {
-    method: "POST",
-    body,
-  });
-  state.files = data.files;
-  state.book = data.book;
-  state.diagnostic = data.diagnostic;
-  state.pageIndex = 0;
-  renderFiles();
-  renderChapters();
-  renderDiagnostic();
-  await refreshPreview();
+      const body = new FormData();
+      [...fileList].forEach((f) => body.append("files", f));
+      setLoadingMessage("Processando arquivo…", "Detectando capítulos e estrutura");
+      const data = await api(`/api/projects/${state.projectId}/files`, {
+        method: "POST",
+        body,
+      });
+      state.files = data.files;
+      state.book = data.book;
+      state.diagnostic = data.diagnostic;
+      state.pageIndex = 0;
+      renderFiles();
+      renderChapters();
+      renderDiagnostic();
+      setLoadingMessage("Montando prévia…", "Diagramando as páginas");
+      await refreshPreview({ quiet: true });
+    },
+  );
 }
 
 async function removeFile(fileId) {
-  const data = await api(`/api/projects/${state.projectId}/files/${fileId}`, {
-    method: "DELETE",
+  await withLoading("Atualizando manuscrito…", "Removendo arquivo e reprocessando", async () => {
+    const data = await api(`/api/projects/${state.projectId}/files/${fileId}`, {
+      method: "DELETE",
+    });
+    state.files = data.files;
+    state.book = data.book;
+    state.diagnostic = data.diagnostic;
+    state.pageIndex = 0;
+    renderFiles();
+    renderChapters();
+    renderDiagnostic();
+    if (state.book) await refreshPreview({ quiet: true });
+    else {
+      state.pages = [];
+      renderPage();
+      $("exportBtn").disabled = true;
+    }
   });
-  state.files = data.files;
-  state.book = data.book;
-  state.diagnostic = data.diagnostic;
-  state.pageIndex = 0;
-  renderFiles();
-  renderChapters();
-  renderDiagnostic();
-  if (state.book) await refreshPreview();
-  else {
-    state.pages = [];
-    renderPage();
-    $("exportBtn").disabled = true;
-  }
 }
 
 async function moveChapter(index, direction) {
-  const data = await api(`/api/projects/${state.projectId}/chapters/move`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ index, direction }),
+  await withLoading("Reordenando capítulos…", "Atualizando a estrutura do livro", async () => {
+    const data = await api(`/api/projects/${state.projectId}/chapters/move`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ index, direction }),
+    });
+    state.book = data.book;
+    state.diagnostic = data.diagnostic;
+    renderChapters();
+    renderDiagnostic();
+    await refreshPreview({ quiet: true });
   });
-  state.book = data.book;
-  state.diagnostic = data.diagnostic;
-  renderChapters();
-  renderDiagnostic();
-  await refreshPreview();
 }
 
 async function setMode(mode) {
@@ -382,7 +444,9 @@ async function setMode(mode) {
       : "Vários arquivos ou um manuscrito completo viram livro com título, sumário e capítulos.";
   $("tocPanel").style.opacity = mode === "chapter" ? "0.45" : "1";
 
-  if (state.projectId) {
+  if (!state.projectId) return;
+
+  await withLoading("Alternando modo…", "Reprocessando o manuscrito", async () => {
     const data = await api(`/api/projects/${state.projectId}/mode`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -394,8 +458,8 @@ async function setMode(mode) {
     renderFiles();
     renderChapters();
     renderDiagnostic();
-    if (state.book) await refreshPreview();
-  }
+    if (state.book) await refreshPreview({ quiet: true });
+  });
 }
 
 function setExportStatus(text, isError = false) {
@@ -441,6 +505,7 @@ async function exportBook() {
   btn.textContent = "Gerando arquivo…";
   setExportStatus("Gerando seu livro…");
 
+  showLoading("Preparando o livro…", `Gerando arquivo ${fmt.toUpperCase()}`);
   try {
     const data = await api(`/api/projects/${state.projectId}/export`, {
       method: "POST",
@@ -450,11 +515,13 @@ async function exportBook() {
 
     const desktopApi = await waitForDesktopApi();
     if (desktopApi?.pick_save_path && desktopApi?.copy_export) {
+      clearLoading();
       const chosen = await desktopApi.pick_save_path(data.filename, fmt);
       if (!chosen) {
         setExportStatus("Exportação cancelada.");
         return;
       }
+      showLoading("Salvando arquivo…", "Gravando no destino escolhido");
       const saved = await desktopApi.copy_export(data.temp_path, chosen);
       setExportStatus(`Livro salvo em: ${saved}`);
       if (desktopApi.reveal_in_folder) {
@@ -472,6 +539,7 @@ async function exportBook() {
     setExportStatus(err.message || "Falha ao exportar.", true);
     alert(err.message || "Falha ao exportar o livro.");
   } finally {
+    clearLoading();
     btn.disabled = !state.book;
     btn.textContent = previousLabel;
   }
@@ -492,12 +560,18 @@ function bindEvents() {
     try {
       await uploadFiles(e.target.files, !append);
     } catch (err) {
+      clearLoading();
       alert(err.message);
     }
   });
 
   document.querySelectorAll("#modeSeg .seg-btn").forEach((btn) => {
-    btn.addEventListener("click", () => setMode(btn.dataset.mode).catch((e) => alert(e.message)));
+    btn.addEventListener("click", () =>
+      setMode(btn.dataset.mode).catch((e) => {
+        clearLoading();
+        alert(e.message);
+      }),
+    );
   });
 
   $("toggleChapters").addEventListener("click", () => {
@@ -506,7 +580,10 @@ function bindEvents() {
   });
 
   $("refreshBtn").addEventListener("click", () => {
-    refreshPreview().catch((e) => alert(e.message));
+    refreshPreview().catch((e) => {
+      clearLoading();
+      alert(e.message);
+    });
   });
   $("prevPage").addEventListener("click", () => {
     state.pageIndex -= 1;
