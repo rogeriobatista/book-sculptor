@@ -12,6 +12,7 @@ const state = {
   },
 
   mode: "book",
+  customTitle: null,
   files: [],
   book: null,
   diagnostic: null,
@@ -20,6 +21,8 @@ const state = {
   pageIndex: 0,
   chaptersOpen: true,
   loadingDepth: 0,
+  titleSaveTimer: null,
+  titleSyncing: false,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -106,6 +109,84 @@ function updateChrome() {
   } else {
     meta.textContent = state.book.title;
   }
+}
+
+function updateTitleFieldUI() {
+  const isChapter = state.mode === "chapter";
+  $("titleLabel").textContent = isChapter ? "Título do capítulo" : "Título do livro";
+  $("titleHint").textContent = isChapter
+    ? "Aparece na abertura do capítulo. Em branco, usa o título detectado."
+    : "Aparece na página de rosto e no arquivo exportado. Em branco, usa o detectado.";
+  $("titleInput").placeholder = isChapter
+    ? "Ex.: O Menino Sem Nome"
+    : "Ex.: Ashen Crown";
+
+  const input = $("titleInput");
+  if (!input || state.titleSyncing) return;
+  const next = state.customTitle ?? state.book?.title ?? "";
+  if (document.activeElement !== input) {
+    input.value = next;
+  }
+}
+
+function scheduleTitleSave() {
+  if (state.titleSaveTimer) clearTimeout(state.titleSaveTimer);
+  state.titleSaveTimer = setTimeout(() => {
+    saveTitle().catch((err) => {
+      clearLoading();
+      alert(err.message || "Não foi possível salvar o título.");
+    });
+  }, 450);
+}
+
+async function saveTitle() {
+  const value = ($("titleInput").value || "").trim();
+  if ((state.customTitle || "") === value) return;
+
+  if (!state.projectId) {
+    state.customTitle = value || null;
+    return;
+  }
+
+  state.titleSyncing = true;
+  try {
+    await withLoading("Atualizando título…", "Aplicando na prévia", async () => {
+      const data = await api(`/api/projects/${state.projectId}/title`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: value }),
+      });
+      applyProjectData(data);
+      if (state.book) await refreshPreview({ quiet: true });
+    });
+  } finally {
+    state.titleSyncing = false;
+    updateTitleFieldUI();
+  }
+}
+
+function applyProjectData(data) {
+  if (!data) return;
+  if ("custom_title" in data) state.customTitle = data.custom_title;
+  if ("book" in data) state.book = data.book;
+  if ("diagnostic" in data) state.diagnostic = data.diagnostic;
+  if ("files" in data) state.files = data.files;
+  if ("mode" in data && data.mode) state.mode = data.mode;
+  renderFiles();
+  renderChapters();
+  renderDiagnostic();
+  updateTitleFieldUI();
+}
+
+async function reapplyCustomTitleIfNeeded() {
+  if (!state.projectId || !state.customTitle || !state.book) return;
+  if (state.book.title === state.customTitle) return;
+  const data = await api(`/api/projects/${state.projectId}/title`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title: state.customTitle }),
+  });
+  applyProjectData(data);
 }
 
 function renderOptions() {
@@ -308,20 +389,50 @@ function renderDiagnostic() {
 
 function applyPageCss() {
   const page = $("bookPage");
+  const wrap = $("pageWrap");
+  const stage = $("previewStage");
   const css = state.css;
-  if (!css) return;
-  page.style.width = css.width_px + "px";
-  page.style.height = css.height_px + "px";
+  if (!page || !css) return;
+
+  const pxPerCm = css.px_per_cm || 37.795;
+  const widthCm = css.width_cm ?? (css.width_px || 252) / 18;
+  const heightCm = css.height_cm ?? (css.height_px || 378) / 18;
+  const widthPx = widthCm * pxPerCm;
+  const heightPx = heightCm * pxPerCm;
+  const margins = css.margins_cm || [2.2, 2.2, 2.5, 2.0];
+  const [top, bottom, left, right] = margins;
+
+  page.style.width = `${widthPx}px`;
+  page.style.height = `${heightPx}px`;
   page.style.fontFamily = css.font_family;
   page.style.fontSize = css.font_size;
   page.style.lineHeight = css.line_height;
   page.dataset.style = css.style_id || "prosa_literaria";
-  page.style.setProperty("--indent", (css.indent_em || 1.5) + "em");
+  page.style.setProperty("--indent", (css.indent_em || 1.65) + "em");
   page.style.setProperty("--para-gap", (css.paragraph_gap_pt || 0) + "pt");
-  $("pageContent").style.padding = css.padding;
+  $("pageContent").style.padding = `${top * pxPerCm}px ${right * pxPerCm}px ${bottom * pxPerCm}px ${left * pxPerCm}px`;
 
   const num = $("pageNumber");
   num.className = "page-number " + (state.settings.page_number || "sem");
+
+  // Escala a página para ocupar quase toda a área da prévia (mantém proporção)
+  if (wrap && stage) {
+    const stageW = stage.clientWidth || stage.getBoundingClientRect().width;
+    const stageH = stage.clientHeight || stage.getBoundingClientRect().height;
+    const padX = 48;
+    const padY = 36;
+    const availW = Math.max(220, stageW - padX);
+    const availH = Math.max(280, stageH - padY);
+    let scale = Math.min(availW / widthPx, availH / heightPx);
+    // Em monitores grandes, permite um pouco de zoom para leitura confortável
+    scale = Math.min(Math.max(scale, 0.55), 1.25);
+
+    page.style.transform = `scale(${scale})`;
+    page.style.transformOrigin = "top center";
+    wrap.style.width = `${Math.round(widthPx * scale)}px`;
+    wrap.style.height = `${Math.round(heightPx * scale)}px`;
+    wrap.dataset.scale = String(scale.toFixed(3));
+  }
 }
 
 function renderPage() {
@@ -329,17 +440,19 @@ function renderPage() {
   $("emptyState").hidden = hasPages;
   $("pageWrap").hidden = !hasPages;
   $("pager").hidden = !hasPages;
+  if ($("fullscreenBtn")) $("fullscreenBtn").hidden = !hasPages;
   updateChrome();
   if (!hasPages) return;
 
   state.pageIndex = Math.max(0, Math.min(state.pageIndex, state.pages.length - 1));
   const page = state.pages[state.pageIndex];
-  applyPageCss();
   $("pageContent").innerHTML = page.html;
   $("pageNumber").textContent = String(state.pageIndex + 1);
   $("pageIndicator").textContent = `${state.pageIndex + 1} / ${state.pages.length}`;
   $("prevPage").disabled = state.pageIndex === 0;
   $("nextPage").disabled = state.pageIndex >= state.pages.length - 1;
+  // Mede o stage depois do layout estar visível
+  requestAnimationFrame(() => applyPageCss());
 }
 
 async function refreshPreview({ quiet = false } = {}) {
@@ -348,12 +461,7 @@ async function refreshPreview({ quiet = false } = {}) {
     const data = await api(`/api/projects/${state.projectId}/preview`);
     state.pages = data.pages;
     state.css = data.css;
-    state.book = data.book;
-    state.diagnostic = data.diagnostic;
-    state.files = data.files;
-    renderFiles();
-    renderChapters();
-    renderDiagnostic();
+    applyProjectData(data);
     renderPage();
   };
   if (quiet) return run();
@@ -384,13 +492,13 @@ async function uploadFiles(fileList, replace = false) {
         method: "POST",
         body,
       });
-      state.files = data.files;
-      state.book = data.book;
-      state.diagnostic = data.diagnostic;
+      const keepTitle = state.customTitle || ($("titleInput").value || "").trim() || null;
+      applyProjectData(data);
+      if (keepTitle) {
+        state.customTitle = keepTitle;
+        await reapplyCustomTitleIfNeeded();
+      }
       state.pageIndex = 0;
-      renderFiles();
-      renderChapters();
-      renderDiagnostic();
       setLoadingMessage("Montando prévia…", "Diagramando as páginas");
       await refreshPreview({ quiet: true });
     },
@@ -402,15 +510,12 @@ async function removeFile(fileId) {
     const data = await api(`/api/projects/${state.projectId}/files/${fileId}`, {
       method: "DELETE",
     });
-    state.files = data.files;
-    state.book = data.book;
-    state.diagnostic = data.diagnostic;
+    applyProjectData(data);
     state.pageIndex = 0;
-    renderFiles();
-    renderChapters();
-    renderDiagnostic();
-    if (state.book) await refreshPreview({ quiet: true });
-    else {
+    if (state.book) {
+      await reapplyCustomTitleIfNeeded();
+      await refreshPreview({ quiet: true });
+    } else {
       state.pages = [];
       renderPage();
       $("exportBtn").disabled = true;
@@ -425,10 +530,7 @@ async function moveChapter(index, direction) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ index, direction }),
     });
-    state.book = data.book;
-    state.diagnostic = data.diagnostic;
-    renderChapters();
-    renderDiagnostic();
+    applyProjectData(data);
     await refreshPreview({ quiet: true });
   });
 }
@@ -443,6 +545,7 @@ async function setMode(mode) {
       ? "Um arquivo isolado é tratado só como conteúdo de capítulo — sem estrutura de livro."
       : "Vários arquivos ou um manuscrito completo viram livro com título, sumário e capítulos.";
   $("tocPanel").style.opacity = mode === "chapter" ? "0.45" : "1";
+  updateTitleFieldUI();
 
   if (!state.projectId) return;
 
@@ -452,12 +555,7 @@ async function setMode(mode) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ mode }),
     });
-    state.book = data.book;
-    state.files = data.files;
-    state.diagnostic = data.diagnostic;
-    renderFiles();
-    renderChapters();
-    renderDiagnostic();
+    applyProjectData(data);
     if (state.book) await refreshPreview({ quiet: true });
   });
 }
@@ -574,6 +672,18 @@ function bindEvents() {
     );
   });
 
+  $("titleInput").addEventListener("input", scheduleTitleSave);
+  $("titleInput").addEventListener("blur", () => {
+    if (state.titleSaveTimer) {
+      clearTimeout(state.titleSaveTimer);
+      state.titleSaveTimer = null;
+    }
+    saveTitle().catch((e) => {
+      clearLoading();
+      alert(e.message);
+    });
+  });
+
   $("toggleChapters").addEventListener("click", () => {
     state.chaptersOpen = !state.chaptersOpen;
     renderChapters();
@@ -601,6 +711,14 @@ function bindEvents() {
     $("fullscreenBtn").textContent = document.body.classList.contains("fullscreen-mode")
       ? "Sair da tela cheia"
       : "Tela cheia";
+    requestAnimationFrame(() => applyPageCss());
+  });
+
+  let resizeTimer = null;
+  window.addEventListener("resize", () => {
+    if (!state.pages.length) return;
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => applyPageCss(), 80);
   });
 }
 
@@ -611,6 +729,7 @@ async function init() {
   renderFiles();
   renderPage();
   updateChrome();
+  updateTitleFieldUI();
   setMode("book");
 }
 

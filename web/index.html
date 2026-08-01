@@ -26,6 +26,19 @@
         <p class="hint" id="modeHint">Vários arquivos ou um manuscrito completo viram livro com título, sumário e capítulos.</p>
       </section>
 
+      <section class="panel" id="titlePanel">
+        <h2 id="titleLabel">Título do livro</h2>
+        <input
+          type="text"
+          id="titleInput"
+          class="title-input"
+          placeholder="Detectado automaticamente"
+          autocomplete="off"
+          spellcheck="true"
+        />
+        <p class="hint" id="titleHint">Deixe em branco para usar o título detectado no arquivo.</p>
+      </section>
+
       <div class="panel-group">
         <p class="group-label">Diagramação</p>
 
@@ -104,19 +117,20 @@
 
       <div class="preview-shell">
         <div class="preview-stage" id="previewStage">
+          <button type="button" class="fullscreen-btn" id="fullscreenBtn" title="Tela cheia" hidden>Tela cheia</button>
+
           <div class="empty-state" id="emptyState">
             <div class="empty-frame">
               <div class="empty-lines" aria-hidden="true">
                 <span></span><span></span><span></span><span></span>
               </div>
               <h2>Envie seu manuscrito</h2>
-              <p>Faça upload de um PDF ou Word para ver a prévia tipográfica do livro.</p>
+              <p>Faça upload de um PDF ou Word para ver a tipografia do livro em tamanho realista.</p>
               <button type="button" class="btn-ghost" id="emptyUploadBtn">Escolher arquivo</button>
             </div>
           </div>
 
           <div class="page-wrap" id="pageWrap" hidden>
-            <button type="button" class="fullscreen-btn" id="fullscreenBtn" title="Tela cheia">Tela cheia</button>
             <article class="book-page" id="bookPage">
               <div class="page-content" id="pageContent"></div>
               <div class="watermark">PRÉVIA</div>

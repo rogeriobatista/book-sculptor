@@ -16,6 +16,7 @@ from app.project import (
     rebuild_book,
     remove_file,
     reorder_chapters,
+    set_custom_title,
     store,
 )
 
@@ -49,6 +50,10 @@ class MoveBody(BaseModel):
 
 class ModeBody(BaseModel):
     mode: str  # book | chapter
+
+
+class TitleBody(BaseModel):
+    title: str = ""
 
 
 class ExportBody(BaseModel):
@@ -131,6 +136,18 @@ def update_settings(project_id: str, body: SettingsBody) -> dict:
     return {"settings": project.settings.to_dict()}
 
 
+@app.post("/api/projects/{project_id}/title")
+def update_title(project_id: str, body: TitleBody) -> dict:
+    try:
+        project = store.get(project_id)
+        book = set_custom_title(project, body.title)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return _project_payload(project, book)
+
+
 @app.get("/api/projects/{project_id}/preview")
 def get_preview(project_id: str) -> dict:
     try:
@@ -143,6 +160,7 @@ def get_preview(project_id: str) -> dict:
     payload["files"] = [{"id": f.id, "name": f.name} for f in project.files]
     payload["diagnostic"] = diagnostic_payload(project.book)
     payload["mode"] = project.mode
+    payload["custom_title"] = project.custom_title
     return payload
 
 
@@ -221,6 +239,7 @@ def _project_payload(project, book) -> dict:
     return {
         "project_id": project.id,
         "mode": project.mode,
+        "custom_title": project.custom_title,
         "files": [{"id": f.id, "name": f.name} for f in project.files],
         "settings": project.settings.to_dict(),
         "book": book_to_dict(book) if book else None,

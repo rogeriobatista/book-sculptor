@@ -169,19 +169,27 @@ def _paginate_chapter(
     heading = _chapter_heading_html(chapter, settings)
     paragraphs = list(chapter.paragraphs)
     if not paragraphs:
-        return [heading]
+        return [heading] if heading else []
 
     pages: list[str] = []
-    current: list[str] = [heading]
-    used = 120
+    has_open = bool(heading)
+    # Abertura tipográfica reserva espaço; o corpo ainda precisa preencher a página
+    open_ratio = 0.52 if chapter.kind in {"prologue", "epilogue"} else 0.45
+    first_budget = int(chars_per_page * (open_ratio if has_open else 1.0))
+    budget = first_budget
+    current: list[str] = [heading] if heading else []
+    used = 200 if has_open else 0
+    min_blocks = 1 if has_open else 0
 
     for index, para in enumerate(paragraphs):
         text = para.text
         cost = len(text) + 20
-        if current and used + cost > chars_per_page and len(current) > 1:
+        if current and used + cost > budget and len(current) > min_blocks:
             pages.append("".join(current))
             current = []
             used = 0
+            budget = chars_per_page
+            min_blocks = 0
         if para.style == "section":
             current.append('<p class="section-rule">. . .</p>')
             current.append(f'<h2 class="section-title">{_esc(para.text)}</h2>')
@@ -210,16 +218,25 @@ def _chapter_heading_html(chapter: Chapter, settings: LayoutSettings) -> str:
         return ""
 
     literary = settings.style_id == "prosa_literaria"
-    ornament = '<p class="ornament">* * *</p>' if settings.chapter_ornament() else ""
+    # Prólogo/epílogo: só espaço tipográfico (sem ornamento entre título e texto)
+    show_ornament = settings.chapter_ornament() and chapter.kind not in {
+        "prologue",
+        "epilogue",
+    }
+    ornament = '<p class="ornament">* * *</p>' if show_ornament else ""
 
     if chapter.kind == "prologue":
         label = "Prólogo"
+        open_class = "chapter-open prologue-open"
     elif chapter.kind == "epilogue":
         label = "Epílogo"
+        open_class = "chapter-open epilogue-open"
     elif chapter.number is not None and chapter.kind == "chapter":
         label = f"Capítulo {chapter.number}" if literary else f"CAPÍTULO {chapter.number}"
+        open_class = "chapter-open"
     else:
         label = ""
+        open_class = "chapter-open"
 
     title = chapter.title.strip()
     if chapter.kind in {"prologue", "epilogue"} and title.lower() in {
@@ -234,7 +251,12 @@ def _chapter_heading_html(chapter: Chapter, settings: LayoutSettings) -> str:
 
     label_html = f'<p class="chapter-label">{_esc(label)}</p>' if label else ""
     title_html = f"<h1 class='chapter-title'>{_esc(title)}</h1>" if title else ""
-    return f'<div class="chapter-open">{label_html}{title_html}{ornament}</div>'
+    spacer = (
+        '<div class="open-spacer" aria-hidden="true"></div>'
+        if chapter.kind in {"prologue", "epilogue"} and not show_ornament
+        else ""
+    )
+    return f'<div class="{open_class}">{label_html}{title_html}{ornament}{spacer}</div>'
 
 
 def _esc(text: str) -> str:
@@ -247,14 +269,23 @@ def _esc(text: str) -> str:
 
 
 def settings_css(settings: LayoutSettings) -> dict:
+    """Métricas da página para a prévia (tamanho realista ~96 dpi)."""
     fmt = settings.format()
     font = settings.font()
     top, bottom, left, right = settings.margins_cm()
-    scale = 18
+    # ~96 CSS dpi: 1 cm ≈ 37.8 px — tipografia e margens ficam fiéis ao impresso
+    px_per_cm = 37.795
     return {
-        "width_px": round(fmt.width_cm * scale),
-        "height_px": round(fmt.height_cm * scale),
-        "padding": f"{top * scale:.0f}px {right * scale:.0f}px {bottom * scale:.0f}px {left * scale:.0f}px",
+        "width_cm": fmt.width_cm,
+        "height_cm": fmt.height_cm,
+        "margins_cm": [top, bottom, left, right],
+        "px_per_cm": px_per_cm,
+        "width_px": round(fmt.width_cm * px_per_cm),
+        "height_px": round(fmt.height_cm * px_per_cm),
+        "padding": (
+            f"{top * px_per_cm:.1f}px {right * px_per_cm:.1f}px "
+            f"{bottom * px_per_cm:.1f}px {left * px_per_cm:.1f}px"
+        ),
         "font_family": font.css_family,
         "font_size": f"{settings.font_size}pt",
         "line_height": settings.line_height(),
@@ -262,7 +293,7 @@ def settings_css(settings: LayoutSettings) -> dict:
         "format_label": fmt.label,
         "font_label": font.label,
         "style_id": settings.style_id,
-        "indent_em": round(settings.first_line_indent_cm() * 2.2, 2),
+        "indent_em": round(settings.first_line_indent_cm() / 0.423, 2),  # cm → em approx at 11pt
         "paragraph_gap_pt": settings.paragraph_spacing_pt(),
         "skip_first_indent": settings.skip_first_indent(),
     }

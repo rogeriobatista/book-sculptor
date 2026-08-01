@@ -12,6 +12,7 @@ from app.layout import LayoutSettings
 from app.models import Book
 from app.structure import (
     _chapter_from_blocks,
+    _format_label,
     _title_from_filename,
     build_chapter_from_file,
     detect_structure,
@@ -33,6 +34,8 @@ class ProjectState:
     book: Book | None = None
     settings: LayoutSettings = field(default_factory=LayoutSettings)
     mode: str = "book"  # book | chapter
+    # Título definido pelo usuário (sobrescreve o detectado)
+    custom_title: str | None = None
 
 
 class ProjectStore:
@@ -126,7 +129,53 @@ def rebuild_book(project: ProjectState) -> Book:
         )
 
     project.book = book
+    apply_custom_title(project)
+    return project.book
+
+
+def apply_custom_title(project: ProjectState) -> Book | None:
+    """Aplica o título manual ao livro ou ao capítulo, conforme o modo."""
+    book = project.book
+    if not book:
+        return None
+
+    title = (project.custom_title or "").strip()
+    if not title:
+        return book
+
+    book.title = title
+
+    if project.mode == "chapter" or book.is_chapter:
+        chapter = book.primary_chapter
+        if chapter is not None:
+            chapter.title = title
+            if chapter.kind == "prologue":
+                chapter.full_label = _format_label("prologue", None, title)
+            elif chapter.kind == "epilogue":
+                chapter.full_label = _format_label("epilogue", None, title)
+            elif chapter.kind == "chapter":
+                chapter.full_label = _format_label("chapter", chapter.number, title)
+            else:
+                chapter.full_label = title
+
     return book
+
+
+def set_custom_title(project: ProjectState, title: str | None) -> Book | None:
+    """Define ou limpa o título manual e reaplica no livro atual."""
+    clean = (title or "").strip()
+    project.custom_title = clean or None
+
+    if project.book is None:
+        return None
+
+    if project.custom_title:
+        return apply_custom_title(project)
+
+    # Sem título manual: reconstrói para recuperar o detectado
+    if project.files:
+        return rebuild_book(project)
+    return project.book
 
 
 def reorder_chapters(project: ProjectState, order: list[int]) -> Book:

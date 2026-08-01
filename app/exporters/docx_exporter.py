@@ -35,7 +35,8 @@ def _write_chapter_body(document: Document, chapter: Chapter, settings: LayoutSe
     font_name = settings.font().docx_name
     size = settings.font_size
     literary = settings.style_id == "prosa_literaria"
-    top_space = Pt(72 if literary else 24)
+    is_front = chapter.kind in {"prologue", "epilogue"}
+    top_space = Pt((56 if is_front else 72) if literary else 24)
 
     if chapter.has_heading:
         if chapter.kind == "prologue":
@@ -80,7 +81,8 @@ def _write_chapter_body(document: Document, chapter: Chapter, settings: LayoutSe
             run = heading.add_run(title)
             _set_run_font(run, font_name, size + (6 if literary else 8), bold=True)
 
-        if settings.chapter_ornament():
+        # Ornamento só em capítulos; prólogo/epílogo vão direto ao corpo
+        if settings.chapter_ornament() and not is_front:
             ornament = document.add_paragraph()
             ornament.alignment = WD_ALIGN_PARAGRAPH.CENTER
             ornament.paragraph_format.space_before = Pt(6)
@@ -88,6 +90,9 @@ def _write_chapter_body(document: Document, chapter: Chapter, settings: LayoutSe
             run = ornament.add_run("* * *")
             _set_run_font(run, font_name, size + 1)
             run.font.color.rgb = RGBColor(0x88, 0x88, 0x88)
+        else:
+            gap = document.add_paragraph()
+            gap.paragraph_format.space_after = Pt(18)
 
     indent = Cm(settings.first_line_indent_cm())
     spacing = Pt(settings.paragraph_spacing_pt())

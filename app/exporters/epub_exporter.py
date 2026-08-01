@@ -44,8 +44,10 @@ def _chapter_html(chapter: Chapter, settings: LayoutSettings) -> tuple[str, str]
             heading += f'<p class="chapter-label">{label}</p>'
         if title:
             heading += f"<h1>{_html_escape(title)}</h1>"
-        if settings.chapter_ornament():
+        if settings.chapter_ornament() and chapter.kind not in {"prologue", "epilogue"}:
             heading += '<p class="ornament">* * *</p>'
+        elif chapter.kind in {"prologue", "epilogue"}:
+            heading += '<div class="open-spacer"></div>'
 
     paragraphs = []
     for index, p in enumerate(chapter.paragraphs):
@@ -100,6 +102,7 @@ def _book_css(settings: LayoutSettings) -> str:
       text-indent: 0 !important;
       margin: 0.2em 0 1.6em;
     }}
+    .open-spacer {{ height: 1.35em; }}
     .section-rule {{
       text-align: center;
       color: #aaa;

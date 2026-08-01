@@ -272,18 +272,21 @@ def _add_chapter(
     literary = settings.style_id == "prosa_literaria"
     opening: list = []
 
+    is_front = chapter.kind in {"prologue", "epilogue"}
     if chapter.has_heading:
-        # Espaço superior tipográfico de abertura de capítulo
-        opening.append(Spacer(1, 3.2 * cm if literary else 1.6 * cm))
+        # Abertura tipográfica: prólogo um pouco mais alto que capítulo numerado
+        top = (2.4 if is_front else 3.2) * cm if literary else 1.6 * cm
+        opening.append(Spacer(1, top))
         label, title = _chapter_label_and_title(chapter, literary)
         if label:
             opening.append(Paragraph(label, styles["chapter_label"]))
         if title:
             opening.append(Paragraph(_esc(title), styles["chapter_title"]))
-        if settings.chapter_ornament():
+        # Ornamento só em capítulos numerados; prólogo segue direto ao texto
+        if settings.chapter_ornament() and not is_front:
             opening.append(Paragraph("* * *", styles["ornament"]))
-        elif not title:
-            opening.append(Spacer(1, 18))
+        else:
+            opening.append(Spacer(1, 16 if is_front else 10))
 
     body_flow: list = []
     for index, paragraph in enumerate(chapter.paragraphs):
@@ -306,10 +309,10 @@ def _add_chapter(
         body_flow.append(Paragraph(_esc(paragraph.text), style))
 
     if opening:
-        # Mantém abertura + primeiro parágrafo juntos (evita título órfão)
-        first_body = body_flow[:1]
-        rest = body_flow[1:]
-        story.append(KeepTogether(opening + first_body))
+        # Abertura + primeiros blocos de corpo (evita página só com título)
+        lead = body_flow[:3]
+        rest = body_flow[3:]
+        story.append(KeepTogether(opening + lead))
         story.extend(rest)
     else:
         story.extend(body_flow)
