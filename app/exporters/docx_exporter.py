@@ -115,8 +115,12 @@ def _write_chapter_body(document: Document, chapter: Chapter, settings: LayoutSe
 
         body = document.add_paragraph()
         body.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+        is_dialogue = paragraph.style == "dialogue"
         prev_section = index > 0 and chapter.paragraphs[index - 1].style == "section"
-        if settings.skip_first_indent() and (index == 0 or prev_section):
+        if is_dialogue:
+            # Fala literária: sempre com recuo, uma linha/parágrafo por réplica
+            body.paragraph_format.first_line_indent = indent
+        elif settings.skip_first_indent() and (index == 0 or prev_section):
             body.paragraph_format.first_line_indent = Cm(0)
         else:
             body.paragraph_format.first_line_indent = indent

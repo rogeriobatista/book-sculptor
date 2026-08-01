@@ -5,7 +5,7 @@ from typing import Literal
 
 DocumentKind = Literal["book", "chapter"]
 ChapterKind = Literal["prologue", "chapter", "epilogue", "other"]
-ParagraphStyle = Literal["body", "section", "quote", "list"]
+ParagraphStyle = Literal["body", "section", "dialogue", "quote", "list"]
 
 
 @dataclass
@@ -107,7 +107,8 @@ class Book:
             for paragraph in chapter.paragraphs:
                 if paragraph.style == "section":
                     continue
-                total += len(paragraph.text.split())
+                if paragraph.style in {"body", "dialogue", "quote", "list"}:
+                    total += len(paragraph.text.split())
         return total
 
     @property

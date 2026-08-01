@@ -695,6 +695,10 @@ body.is-loading .link-btn {
 .page-content p.first {
   text-indent: 0;
 }
+.page-content p.dialogue {
+  text-indent: var(--indent, 1.5em);
+  margin: 0 0 var(--para-gap, 0pt);
+}
 
 .watermark {
   pointer-events: none;

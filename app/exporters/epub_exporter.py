@@ -53,6 +53,9 @@ def _chapter_html(chapter: Chapter, settings: LayoutSettings) -> tuple[str, str]
             paragraphs.append('<p class="section-rule">. . .</p>')
             paragraphs.append(f'<h2 class="section-title">{_html_escape(p.text)}</h2>')
             continue
+        if p.style == "dialogue":
+            paragraphs.append(f'<p class="dialogue">{_html_escape(p.text)}</p>')
+            continue
         prev_section = index > 0 and chapter.paragraphs[index - 1].style == "section"
         cls = (
             ' class="first"'
@@ -119,6 +122,10 @@ def _book_css(settings: LayoutSettings) -> str:
       hyphens: auto;
     }}
     p.first {{ text-indent: 0; }}
+    p.dialogue {{
+      text-indent: {indent}cm;
+      margin: 0 0 {gap}pt;
+    }}
     .title-page {{ text-align: center; margin-top: 30%; }}
     .title-page h1 {{ font-size: 2em; font-weight: 700; }}
     .title-rule {{ color: #888; margin: 1em 0; text-indent: 0; }}

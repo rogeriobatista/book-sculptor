@@ -5,7 +5,7 @@ from app.models import Book, Chapter
 
 
 def chapter_to_dict(chapter: Chapter, index: int) -> dict:
-    body_paras = [p for p in chapter.paragraphs if p.style == "body"]
+    body_paras = [p for p in chapter.paragraphs if p.style in {"body", "dialogue"}]
     sections = [p for p in chapter.paragraphs if p.style == "section"]
     snippet = ""
     if body_paras:
@@ -186,6 +186,10 @@ def _paginate_chapter(
             current.append('<p class="section-rule">. . .</p>')
             current.append(f'<h2 class="section-title">{_esc(para.text)}</h2>')
             used += 60
+            continue
+        if para.style == "dialogue":
+            current.append(f'<p class="dialogue">{_esc(text)}</p>')
+            used += cost
             continue
         # first indent: primeiro parágrafo de corpo após título/seção
         is_first_body = settings.skip_first_indent() and (

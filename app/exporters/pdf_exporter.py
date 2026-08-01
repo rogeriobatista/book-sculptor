@@ -195,6 +195,17 @@ def _styles(settings: LayoutSettings) -> dict[str, ParagraphStyle]:
             spaceAfter=gap,
             spaceBefore=0,
         ),
+        "dialogue": ParagraphStyle(
+            "Dialogue",
+            parent=base["Normal"],
+            fontName=font,
+            fontSize=size,
+            leading=leading,
+            alignment=TA_JUSTIFY,
+            firstLineIndent=indent,
+            spaceAfter=gap,
+            spaceBefore=0,
+        ),
         "section": ParagraphStyle(
             "SectionTitle",
             parent=base["Heading2"],
@@ -282,6 +293,9 @@ def _add_chapter(
                 section_bits.append(Paragraph(". . .", styles["section_rule"]))
             section_bits.append(Paragraph(_esc(paragraph.text), styles["section"]))
             body_flow.append(KeepTogether(section_bits))
+            continue
+        if paragraph.style == "dialogue":
+            body_flow.append(Paragraph(_esc(paragraph.text), styles["dialogue"]))
             continue
         prev_section = index > 0 and chapter.paragraphs[index - 1].style == "section"
         style = (

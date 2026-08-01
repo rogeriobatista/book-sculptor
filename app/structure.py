@@ -4,6 +4,7 @@ import re
 import unicodedata
 from pathlib import Path
 
+from app.dialogue import expand_paragraphs_with_dialogue, split_dialogue
 from app.models import Book, Chapter, ChapterKind, Paragraph, TextBlock
 
 # ——— Padrões de divisão (baseados na formatação tipográfica do manuscrito) ———
@@ -580,7 +581,8 @@ def detect_structure(
             if i in section_indices:
                 body.append(Paragraph(text=classifications[i]["full_label"], style="section"))
             else:
-                body.append(Paragraph(text=text, style="body"))
+                body.extend(split_dialogue(text))
+        body = expand_paragraphs_with_dialogue(body)
         # Sem divisões detectadas: corpo do livro sem título artificial no topo
         chapters.append(
             Chapter(title="", paragraphs=body, number=None, kind="other", full_label="")
@@ -597,10 +599,15 @@ def detect_structure(
         if i in section_indices:
             preface.append(Paragraph(text=classifications[i]["full_label"], style="section"))
         else:
-            preface.append(Paragraph(text=text, style="body"))
+            preface.extend(split_dialogue(text))
     if preface and classifications[first]["kind"] != "prologue":
         chapters.append(
-            Chapter(title="Introdução", paragraphs=preface, number=None, kind="other")
+            Chapter(
+                title="Introdução",
+                paragraphs=expand_paragraphs_with_dialogue(preface),
+                number=None,
+                kind="other",
+            )
         )
 
     for idx, start in enumerate(major_indices):
@@ -615,7 +622,7 @@ def detect_structure(
             if i in section_indices:
                 body.append(Paragraph(text=classifications[i]["full_label"], style="section"))
             else:
-                body.append(Paragraph(text=text, style="body"))
+                body.extend(split_dialogue(text))
 
         kind: ChapterKind
         if info["kind"] in {"prologue", "epilogue", "chapter"}:
@@ -626,7 +633,7 @@ def detect_structure(
         chapters.append(
             Chapter(
                 title=info["title"],
-                paragraphs=body,
+                paragraphs=expand_paragraphs_with_dialogue(body),
                 number=info["number"],
                 kind=kind,
                 full_label=info["full_label"],
@@ -700,10 +707,10 @@ def _parse_body_with_sections(blocks: list[TextBlock]) -> list[Paragraph]:
             if info is None and not text.endswith((".", "!", "?")):
                 paragraphs.append(Paragraph(text=text, style="section"))
             else:
-                paragraphs.append(Paragraph(text=text, style="body"))
+                paragraphs.extend(split_dialogue(text))
         else:
-            paragraphs.append(Paragraph(text=text, style="body"))
-    return paragraphs
+            paragraphs.extend(split_dialogue(text))
+    return expand_paragraphs_with_dialogue(paragraphs)
 
 
 def _chapter_from_blocks(
