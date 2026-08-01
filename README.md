@@ -1,88 +1,80 @@
 # Book Sculptor
 
-Aplicativo simples para transformar arquivos **PDF** ou **Word** em livros bem formatados.
-
-Não valida se o conteúdo está correto — apenas organiza o texto em estrutura de livro (título, sumário, capítulos e parágrafos).
-
-## O que ele faz
-
-Escolha o modo na tela:
-
-**Capítulo** — um arquivo isolado é tratado só como conteúdo de capítulo (sem página de título nem sumário).
-
-**Livro inteiro** — monta o livro completo:
-- pasta com um arquivo por capítulo, ou
-- um único arquivo que já contém vários capítulos
-
-O livro gerado inclui página de título, sumário e capítulos formatados.
-## Requisitos
-
-- Python 3.10 ou superior
-- Windows ou macOS
+Aplicativo **desktop local** de diagramação de livros para Windows e macOS.  
+Abre em uma janela própria — sem precisar usar o navegador.
 
 ## Instalação (primeira vez)
-
-Abra o Terminal (macOS) ou o Prompt de Comando / PowerShell (Windows) na pasta do projeto e execute:
 
 ```bash
 pip install -r requirements.txt
 ```
 
+No Windows 10/11, o app usa o WebView2 (já costuma vir instalado).  
+No macOS, usa a WebKit nativa do sistema.
+
 ## Como usar
 
-**Windows:** dê dois cliques em `iniciar.bat`  
-**macOS:** dê dois cliques em `iniciar.command` (na primeira vez, clique com o botão direito → Abrir)
+**Windows:** dois cliques em `iniciar.bat`  
+**macOS:** dois cliques em `iniciar.command` (na primeira vez: botão direito → Abrir)
 
-Ou pelo terminal:
+Ou no terminal:
 
 ```bash
 python main.py
 ```
 
-### Capítulo isolado
-1. Selecione **Capítulo**
-2. Clique em **Escolher arquivo do capítulo**
-3. **Formatar** → **Salvar capítulo**
+Isso abre a janela do Book Sculptor. Feche a janela para encerrar.
 
-O resultado é só o capítulo formatado (título + texto), sem estrutura de livro.
+Se quiser abrir no navegador (opcional):
 
-### Livro inteiro (pasta)
-1. Selecione **Livro inteiro**
-2. Organize os capítulos numa pasta:
-   ```
-   Meu Livro/
-     01_O Despertar.docx
-     02_As Cartas.pdf
-     03_O Encontro.docx
-   ```
-3. Clique em **Escolher pasta de capítulos**
-4. **Formatar** → **Salvar livro**
+```bash
+python main.py --browser
+```
 
-### Livro inteiro (um arquivo)
-1. Selecione **Livro inteiro**
-2. Clique em **Ou um arquivo do livro**
-3. **Formatar** → **Salvar livro**
+## O que faz
 
-A ordem dos capítulos na pasta segue o nome dos arquivos (ordenação natural: `2` antes de `10`).  
-O título do livro vem do nome da pasta.
+- Envia manuscritos **PDF** ou **Word (.docx)**
+- Detecta capítulos automaticamente
+- Ajusta formato, fonte, tamanho, margens, numeração e sumário
+- Mostra **prévia tipográfica** página a página
+- Exporta **Word**, **PDF** ou **EPUB** diagramados
+
+### Modos
+
+- **Livro inteiro** — um ou vários arquivos viram livro com título, sumário e capítulos
+- **Capítulo** — um arquivo isolado é tratado só como conteúdo de capítulo
+
+## Opções de diagramação
+
+| Opção | Valores |
+|-------|---------|
+| Formato | Médio 14×21 · Padrão 15,5×23 · Bolso 11×18 · Técnico 21×29,7 |
+| Fonte | Georgia · Literata · Garamond · Baskerville |
+| Tamanho | 10–14 |
+| Densidade | Compacto · Padrão · Espaçoso |
+| Número de página | Externo · Centro · Sem |
+| Sumário | Com / Sem |
 
 ## Dicas
 
-- Preferência por `.docx` em vez de `.doc` antigo
-- No modo **Capítulo**, o arquivo inteiro vira conteúdo daquele capítulo
-- No modo **Livro** com pasta, nomeie como `01_titulo.docx`, `02_titulo.docx` para ordem e título
-- No modo **Livro** com um arquivo, capítulos como `Capítulo 1`, `Chapter 2`, `1. Título` são detectados com mais precisão
+- Vários arquivos na ordem = um capítulo por arquivo
+- Nomeie como `01_titulo.docx`, `02_titulo.docx` para controlar a ordem
+- Capítulos no texto como `Capítulo 1` / `Chapter 2` também são detectados
 
-## Estrutura do projeto
+## Estrutura
 
 ```
 book-sculptor/
-├── main.py                 # Inicia o aplicativo
-├── requirements.txt
+├── main.py              # App desktop
+├── iniciar.bat          # Atalho Windows
+├── iniciar.command      # Atalho macOS
+├── web/                 # Interface
 ├── app/
-│   ├── gui.py              # Interface
-│   ├── models.py           # Modelo do livro
-│   ├── structure.py        # Detecção de capítulos / pasta
-│   ├── extractors/         # Leitura de PDF e Word
-│   └── exporters/          # Exportação DOCX e EPUB
+│   ├── server.py        # Motor interno
+│   ├── layout.py
+│   ├── preview.py
+│   ├── project.py
+│   ├── structure.py
+│   ├── extractors/
+│   └── exporters/
 ```

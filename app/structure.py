@@ -71,17 +71,24 @@ def _parse_chapter_title(text: str) -> tuple[int | None, str]:
 
 
 def _guess_title(blocks: list[str], source_path: Path) -> str:
+    fallback = source_path.stem.replace("_", " ").replace("-", " ").strip()
+    fallback = re.sub(r"^\d+\s*", "", fallback).strip() or fallback
+    fallback = fallback.title() if fallback.islower() else fallback
+
     for block in blocks[:8]:
         clean = _normalize(block)
         if any(p.match(clean) for p in CHAPTER_PATTERNS):
             continue
-        # Primeiros blocos curtos costumam ser o título
         words = clean.split()
-        if 1 <= len(words) <= TITLE_CANDIDATE_MAX_WORDS and len(clean) <= TITLE_CANDIDATE_MAX_CHARS:
-            if clean.lower().startswith(("por ", "by ", "autor", "author")):
-                continue
-            return clean.title() if clean.isupper() else clean
-    return source_path.stem.replace("_", " ").replace("-", " ").strip().title()
+        if not (1 <= len(words) <= TITLE_CANDIDATE_MAX_WORDS and len(clean) <= TITLE_CANDIDATE_MAX_CHARS):
+            continue
+        if clean.lower().startswith(("por ", "by ", "autor", "author")):
+            continue
+        # Frases com pontuação final são corpo, não título
+        if clean.endswith((".", "!", "?", ";", ",")):
+            continue
+        return clean.title() if clean.isupper() else clean
+    return fallback
 
 
 def _guess_author(blocks: list[str]) -> str:

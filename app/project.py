@@ -1,0 +1,172 @@
+from __future__ import annotations
+
+import re
+import shutil
+import tempfile
+import uuid
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from app.extractors import extract_text
+from app.layout import LayoutSettings
+from app.models import Book, Chapter
+from app.structure import (
+    _chapter_from_blocks,
+    _normalize,
+    _title_from_filename,
+    detect_structure,
+)
+
+
+@dataclass
+class ManuscriptFile:
+    id: str
+    name: str
+    path: Path
+
+
+@dataclass
+class ProjectState:
+    id: str
+    work_dir: Path
+    files: list[ManuscriptFile] = field(default_factory=list)
+    book: Book | None = None
+    settings: LayoutSettings = field(default_factory=LayoutSettings)
+    mode: str = "book"  # book | chapter
+
+
+class ProjectStore:
+    def __init__(self) -> None:
+        self._projects: dict[str, ProjectState] = {}
+
+    def create(self) -> ProjectState:
+        project_id = uuid.uuid4().hex[:12]
+        work_dir = Path(tempfile.mkdtemp(prefix=f"booksculptor-{project_id}-"))
+        project = ProjectState(id=project_id, work_dir=work_dir)
+        self._projects[project_id] = project
+        return project
+
+    def get(self, project_id: str) -> ProjectState:
+        project = self._projects.get(project_id)
+        if not project:
+            raise KeyError("Projeto não encontrado. Envie o manuscrito novamente.")
+        return project
+
+    def delete(self, project_id: str) -> None:
+        project = self._projects.pop(project_id, None)
+        if project and project.work_dir.exists():
+            shutil.rmtree(project.work_dir, ignore_errors=True)
+
+
+store = ProjectStore()
+
+
+def add_upload(project: ProjectState, filename: str, content: bytes) -> ManuscriptFile:
+    suffix = Path(filename).suffix.lower()
+    if suffix not in {".pdf", ".docx"}:
+        raise ValueError("Use apenas arquivos PDF (.pdf) ou Word (.docx).")
+
+    file_id = uuid.uuid4().hex[:10]
+    safe_name = Path(filename).name
+    dest = project.work_dir / f"{file_id}_{safe_name}"
+    dest.write_bytes(content)
+    item = ManuscriptFile(id=file_id, name=safe_name, path=dest)
+    project.files.append(item)
+    return item
+
+
+def remove_file(project: ProjectState, file_id: str) -> None:
+    remaining = []
+    for item in project.files:
+        if item.id == file_id:
+            if item.path.exists():
+                item.path.unlink()
+        else:
+            remaining.append(item)
+    project.files = remaining
+
+
+def rebuild_book(project: ProjectState) -> Book:
+    if not project.files:
+        raise ValueError("Envie ao menos um arquivo do manuscrito.")
+
+    if project.mode == "chapter":
+        file = project.files[0]
+        _, blocks = extract_text(file.path)
+        cleaned = [_normalize(b) for b in blocks if _normalize(b)]
+        number, title = _title_from_filename(Path(file.name))
+        chapter = _chapter_from_blocks(cleaned, number, title)
+        book = Book(
+            title=chapter.title,
+            author="",
+            chapters=[chapter],
+            source_path=str(file.path),
+            kind="chapter",
+        )
+    elif len(project.files) == 1:
+        file = project.files[0]
+        _, blocks = extract_text(file.path)
+        # Usa o nome do arquivo como path "lógico" para o título fallback
+        logical = Path(file.name)
+        book = detect_structure(blocks, logical)
+        stem = logical.stem.replace("_", " ").replace("-", " ").strip()
+        stem = re.sub(r"^\d+\s*", "", stem).strip() or stem
+        if not book.title or book.title.lower() in {"conteúdo", "content"}:
+            book.title = stem
+        # Se o título detectado ainda parece frase de corpo, prefere o nome do arquivo
+        if book.title.endswith((".", "!", "?")) and stem:
+            book.title = stem
+    else:
+        chapters: list[Chapter] = []
+        for index, file in enumerate(project.files, start=1):
+            _, blocks = extract_text(file.path)
+            cleaned = [_normalize(b) for b in blocks if _normalize(b)]
+            number, title = _title_from_filename(Path(file.name))
+            chapter = _chapter_from_blocks(
+                cleaned,
+                number if number is not None else index,
+                title,
+            )
+            chapters.append(chapter)
+
+        # Título a partir do nome do primeiro arquivo, sem prefixo numérico
+        raw = Path(project.files[0].name).stem.replace("_", " ").replace("-", " ").strip()
+        book_title = re.sub(r"^\d+\s*", "", raw).strip() or "Manuscrito"
+        book = Book(
+            title=book_title,
+            author="",
+            chapters=chapters,
+            source_path=str(project.work_dir),
+            kind="book",
+        )
+
+    project.book = book
+    return book
+
+
+def reorder_chapters(project: ProjectState, order: list[int]) -> Book:
+    if not project.book:
+        raise ValueError("Nenhum livro carregado.")
+    chapters = project.book.chapters
+    if sorted(order) != list(range(len(chapters))):
+        raise ValueError("Ordem de capítulos inválida.")
+    project.book.chapters = [chapters[i] for i in order]
+    n = 1
+    for chapter in project.book.chapters:
+        if chapter.title in {"Introdução", "Prefácio"}:
+            continue
+        if chapter.number is not None:
+            chapter.number = n
+            n += 1
+    return project.book
+
+
+def move_chapter(project: ProjectState, index: int, direction: int) -> Book:
+    if not project.book:
+        raise ValueError("Nenhum livro carregado.")
+    chapters = project.book.chapters
+    target = index + direction
+    if index < 0 or index >= len(chapters) or target < 0 or target >= len(chapters):
+        return project.book
+    chapters[index], chapters[target] = chapters[target], chapters[index]
+    return reorder_chapters(project, list(range(len(chapters))))

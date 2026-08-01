@@ -10,5 +10,8 @@ build/
 Thumbs.db
 /saida.*
 *.egg-info/
+.exports/
+.venv/
+venv/
 .idea/
 .vscode/
