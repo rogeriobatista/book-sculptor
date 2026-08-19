@@ -17,6 +17,9 @@ import {
   type Chapter,
   type ExportJob,
   clientApiFetch,
+  clientApiDownload,
+  isAbortError,
+  isProtectedFileUrl,
 } from "@/lib/client-api";
 import { Link } from "@/i18n/navigation";
 import { useStableAuth } from "@/lib/use-app-auth";
@@ -63,6 +66,7 @@ export function BookWorkspace({ bookId, locale, tab }: Props) {
     null,
   );
   const loadGen = useRef(0);
+  const exportAbort = useRef<AbortController | null>(null);
 
   const canUseAi = Boolean(me && me.plan !== "free");
   const isStudio = me?.plan === "studio";
@@ -86,16 +90,17 @@ export function BookWorkspace({ bookId, locale, tab }: Props) {
     return () => window.removeEventListener("popstate", onPop);
   }, []);
 
-  async function load() {
+  async function load(signal?: AbortSignal) {
     const gen = ++loadGen.current;
     const token = await getTokenRef.current();
     if (!token) throw new Error("Not signed in.");
+    const fetchOpts = signal ? { signal } : {};
     const [b, c, profile] = await Promise.all([
-      clientApiFetch<Book>(`/api/v1/books/${bookId}`, token),
-      clientApiFetch<Chapter[]>(`/api/v1/books/${bookId}/chapters`, token),
-      clientApiFetch<Me>("/api/v1/me", token),
+      clientApiFetch<Book>(`/api/v1/books/${bookId}`, token, fetchOpts),
+      clientApiFetch<Chapter[]>(`/api/v1/books/${bookId}/chapters`, token, fetchOpts),
+      clientApiFetch<Me>("/api/v1/me", token, fetchOpts),
     ]);
-    if (gen !== loadGen.current) return;
+    if (gen !== loadGen.current || signal?.aborted) return;
     setBook(b);
     setChapters(c);
     setMe(profile);
@@ -107,9 +112,9 @@ export function BookWorkspace({ bookId, locale, tab }: Props) {
   useEffect(() => {
     if (!isLoaded) return;
     if (!isSignedIn) return;
-    let cancelled = false;
-    load().catch((err) => {
-      if (!cancelled) {
+    const ac = new AbortController();
+    load(ac.signal).catch((err) => {
+      if (!isAbortError(err) && !ac.signal.aborted) {
         toast.error(
           s("notifyLoadFailed"),
           err instanceof Error ? err.message : undefined,
@@ -117,7 +122,7 @@ export function BookWorkspace({ bookId, locale, tab }: Props) {
       }
     });
     return () => {
-      cancelled = true;
+      ac.abort();
       loadGen.current += 1;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -125,7 +130,7 @@ export function BookWorkspace({ bookId, locale, tab }: Props) {
 
   useEffect(() => {
     if (view !== "preview" || !isLoaded || !isSignedIn) return;
-    let cancelled = false;
+    const ac = new AbortController();
     const loadingId = toast.loading(s("notifyPreviewLoading"));
     (async () => {
       try {
@@ -134,8 +139,8 @@ export function BookWorkspace({ bookId, locale, tab }: Props) {
         const payload = await clientApiFetch<{
           pages: { type?: string; title?: string; html: string }[];
           css?: Record<string, string | number>;
-        }>(`/api/v1/books/${bookId}/preview`, token);
-        if (cancelled) {
+        }>(`/api/v1/books/${bookId}/preview`, token, { signal: ac.signal });
+        if (ac.signal.aborted) {
           toast.dismiss(loadingId);
           return;
         }
@@ -143,18 +148,20 @@ export function BookWorkspace({ bookId, locale, tab }: Props) {
         setPreviewPages(payload.pages || []);
         toast.dismiss(loadingId);
       } catch (err) {
-        if (!cancelled) {
-          setPreviewPages([]);
-          toast.update(loadingId, {
-            tone: "error",
-            title: s("notifyPreviewFailed"),
-            description: err instanceof Error ? err.message : undefined,
-          });
-        } else toast.dismiss(loadingId);
+        if (isAbortError(err) || ac.signal.aborted) {
+          toast.dismiss(loadingId);
+          return;
+        }
+        setPreviewPages([]);
+        toast.update(loadingId, {
+          tone: "error",
+          title: s("notifyPreviewFailed"),
+          description: err instanceof Error ? err.message : undefined,
+        });
       }
     })();
     return () => {
-      cancelled = true;
+      ac.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bookId, view, isLoaded, isSignedIn]);
@@ -345,24 +352,39 @@ export function BookWorkspace({ bookId, locale, tab }: Props) {
   }
 
   async function onExport(format: ExportFormat) {
+    exportAbort.current?.abort();
+    const ac = new AbortController();
+    exportAbort.current = ac;
     setBusy(true);
     const loadingId = toast.loading(
       s("notifyExporting", { format: format.toUpperCase() }),
     );
     try {
       const token = await getToken();
+      const fetchOpts = { signal: ac.signal };
       let job = await clientApiFetch<ExportJob>(
         `/api/v1/books/${bookId}/exports`,
         token,
-        { method: "POST", body: JSON.stringify({ format }) },
+        { method: "POST", body: JSON.stringify({ format }), ...fetchOpts },
       );
       for (let i = 0; i < 40; i++) {
+        if (ac.signal.aborted) break;
         if (job.status !== "queued" && job.status !== "processing") break;
         await new Promise((r) => setTimeout(r, 500));
-        job = await clientApiFetch<ExportJob>(`/api/v1/exports/${job.id}`, token);
+        if (ac.signal.aborted) break;
+        job = await clientApiFetch<ExportJob>(`/api/v1/exports/${job.id}`, token, fetchOpts);
+      }
+      if (ac.signal.aborted) {
+        toast.dismiss(loadingId);
+        return;
       }
       if (job.status === "ready" && job.download_url) {
-        window.open(job.download_url, "_blank");
+        const filename = `book.${format}`;
+        if (isProtectedFileUrl(job.download_url)) {
+          await clientApiDownload(job.download_url, token, filename);
+        } else {
+          window.open(job.download_url, "_blank", "noopener,noreferrer");
+        }
         toast.update(loadingId, {
           tone: "success",
           title: s("notifyExportReady"),
@@ -380,12 +402,17 @@ export function BookWorkspace({ bookId, locale, tab }: Props) {
         });
       }
     } catch (err) {
+      if (isAbortError(err)) {
+        toast.dismiss(loadingId);
+        return;
+      }
       toast.update(loadingId, {
         tone: "error",
         title: s("notifyExportFailed"),
         description: err instanceof Error ? err.message : undefined,
       });
     } finally {
+      if (exportAbort.current === ac) exportAbort.current = null;
       setBusy(false);
     }
   }

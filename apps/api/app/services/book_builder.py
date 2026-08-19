@@ -56,6 +56,9 @@ def domain_book_from_rows(book: BookRow, chapters: list[ChapterRow]) -> Book:
         source_path="",
         kind="chapter" if book.mode == "chapter" else "book",
         locale=locale,
+        cover_url=book.cover_url,
+        cover_key=book.cover_key,
+        cover_source=book.cover_source,
     )
 
 

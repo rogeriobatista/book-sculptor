@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
-import { clientApiFetch } from "@/lib/client-api";
+import { clientApiFetch, isAbortError } from "@/lib/client-api";
 import { useStableAuth } from "@/lib/use-app-auth";
 
 type Member = {
@@ -36,25 +36,26 @@ export function TeamPanel({ bookId, isStudio, labels }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  async function loadMembers() {
+  async function loadMembers(signal?: AbortSignal) {
     const token = await getTokenRef.current();
-    return clientApiFetch<Member[]>(`/api/v1/books/${bookId}/members`, token);
+    return clientApiFetch<Member[]>(`/api/v1/books/${bookId}/members`, token, {
+      signal,
+    });
   }
 
   useEffect(() => {
-    let cancelled = false;
-    loadMembers()
+    const ac = new AbortController();
+    loadMembers(ac.signal)
       .then((data) => {
-        if (!cancelled) setMembers(data);
+        if (!ac.signal.aborted) setMembers(data);
       })
       .catch((err) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : "Error");
+        if (!isAbortError(err) && !ac.signal.aborted) {
+          setError(err instanceof Error ? err.message : "Error");
+        }
       });
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bookId]);
+    return () => ac.abort();
+  }, [bookId, getTokenRef]);
 
   async function invite(event: FormEvent) {
     event.preventDefault();

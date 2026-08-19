@@ -97,6 +97,15 @@ def build_preview_pages(book: Book, settings: LayoutSettings) -> list[dict]:
                     }
                 )
     else:
+        cover_url = getattr(book, "cover_url", None)
+        if cover_url:
+            pages.append(
+                {
+                    "type": "cover",
+                    "title": book.title,
+                    "html": _cover_page_html(book),
+                }
+            )
         pages.append(
             {
                 "type": "title",
@@ -140,6 +149,16 @@ def build_preview_pages(book: Book, settings: LayoutSettings) -> list[dict]:
         pages.append({"type": "empty", "html": "<p class='muted'>Nenhum conteúdo.</p>"})
 
     return pages
+
+
+def _cover_page_html(book: Book) -> str:
+    url = getattr(book, "cover_url", None) or ""
+    alt = _esc(book.title or "Cover")
+    return (
+        f'<div class="cover-page">'
+        f'<img src="{_esc(url)}" alt="{alt}" class="cover-image" />'
+        f"</div>"
+    )
 
 
 def _title_page_html(book: Book, settings: LayoutSettings) -> str:

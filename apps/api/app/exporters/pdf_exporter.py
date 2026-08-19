@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 from pathlib import Path
 
 from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT
@@ -9,6 +10,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import (
     CondPageBreak,
+    Image,
     KeepTogether,
     PageBreak,
     Paragraph,
@@ -19,6 +21,7 @@ from reportlab.platypus import (
 from app.i18n_labels import SPECIAL_SECTION_KINDS
 from app.layout import LayoutSettings
 from app.models import Book, Chapter
+from app.storage import get_bytes
 
 
 def _register_fonts() -> dict[str, str]:
@@ -398,6 +401,26 @@ def export_pdf(
     else:
         from app.typography_i18n import toc_title
 
+        cover_bytes = None
+        cover_key = getattr(book, "cover_key", None)
+        if cover_key:
+            cover_bytes = get_bytes(cover_key)
+
+        if cover_bytes:
+            fmt_size = settings.format()
+            # Full-bleed-ish cover within margins
+            max_w = (fmt_size.width_cm - left - right) * cm
+            max_h = (fmt_size.height_cm - top - bottom) * cm
+            img = Image(io.BytesIO(cover_bytes))
+            iw, ih = float(img.imageWidth), float(img.imageHeight)
+            scale = min(max_w / iw, max_h / ih) if iw and ih else 1.0
+            img.drawWidth = iw * scale
+            img.drawHeight = ih * scale
+            story.append(Spacer(1, max(0, (max_h - img.drawHeight) / 2)))
+            story.append(img)
+            story.append(PageBreak())
+            skip_pages = 1
+
         # ——— Página de rosto ———
         story.append(Spacer(1, 5.2 * cm))
         story.append(Paragraph(_esc(book.title), styles["title"]))
@@ -406,7 +429,7 @@ def export_pdf(
         if book.author:
             story.append(Paragraph(_esc(book.author), styles["author"]))
         story.append(PageBreak())
-        skip_pages = 1
+        skip_pages += 1
 
         has_named = any(
             c.has_heading or any(p.style == "section" for p in c.paragraphs)
@@ -423,7 +446,7 @@ def export_pdf(
                     if para.style == "section":
                         story.append(Paragraph(_esc(para.text), styles["toc_section"]))
             story.append(PageBreak())
-            skip_pages = 2
+            skip_pages += 1
 
         for index, chapter in enumerate(book.chapters):
             if index > 0:

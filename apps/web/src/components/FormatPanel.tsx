@@ -3,8 +3,9 @@
 import { FormEvent, useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { ExportActions, type ExportFormat } from "@/components/ExportActions";
-import { type Book, clientApiFetch } from "@/lib/client-api";
-import { useAppAuth } from "@/lib/use-app-auth";
+import { CoverPanel } from "@/components/CoverPanel";
+import { type Book, clientApiFetch, isAbortError } from "@/lib/client-api";
+import { useStableAuth } from "@/lib/use-app-auth";
 import { useToast } from "@/components/ToastProvider";
 
 type LayoutOptions = {
@@ -30,7 +31,7 @@ export function FormatPanel({
   canExport = false,
   onExport,
 }: Props) {
-  const { getToken } = useAppAuth();
+  const { getTokenRef } = useStableAuth();
   const toast = useToast();
   const t = useTranslations("studio");
   const common = useTranslations("common");
@@ -38,23 +39,22 @@ export function FormatPanel({
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    let cancelled = false;
+    const ac = new AbortController();
     (async () => {
       try {
-        const token = await getToken();
+        const token = await getTokenRef.current();
         const data = await clientApiFetch<LayoutOptions>(
           "/api/v1/books/options",
           token,
+          { signal: ac.signal },
         );
-        if (!cancelled) setOptions(data);
-      } catch {
-        if (!cancelled) setOptions(null);
+        if (!ac.signal.aborted) setOptions(data);
+      } catch (err) {
+        if (!isAbortError(err) && !ac.signal.aborted) setOptions(null);
       }
     })();
-    return () => {
-      cancelled = true;
-    };
-  }, [getToken]);
+    return () => ac.abort();
+  }, [getTokenRef]);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -62,7 +62,7 @@ export function FormatPanel({
     setBusy(true);
     const loadingId = toast.loading(t("notifySaving"));
     try {
-      const token = await getToken();
+      const token = await getTokenRef.current();
       const updated = await clientApiFetch<Book>(`/api/v1/books/${book.id}`, token, {
         method: "PATCH",
         body: JSON.stringify({
@@ -103,7 +103,10 @@ export function FormatPanel({
         <p className="muted">{t("formatLead")}</p>
       </header>
 
+      <CoverPanel book={book} onSaved={onSaved} />
+
       <form className="format-grid" onSubmit={onSubmit}>
+        <h3 className="format-section-title">{t("formatTypographyTitle")}</h3>
         <label>
           {t("formatStyle")}
           <select

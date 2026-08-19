@@ -1,9 +1,10 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ConfirmModal } from "@/components/ConfirmModal";
 import { type Chapter } from "@/lib/client-api";
+import { useDebouncedValue } from "@/lib/use-debounce";
 import {
   chapterDisplayLabel,
   chapterShortTitle,
@@ -54,10 +55,21 @@ export function ChapterSidebar({
   const [items, setItems] = useState(chapters);
   const [dragId, setDragId] = useState<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
+  const [filter, setFilter] = useState("");
+  const debouncedFilter = useDebouncedValue(filter.trim().toLowerCase(), 300);
 
   useEffect(() => {
     setItems(chapters);
   }, [chapters]);
+
+  const visibleItems = useMemo(() => {
+    if (!debouncedFilter) return items;
+    return items.filter((chapter) => {
+      const label = chapterDisplayLabel(chapter).toLowerCase();
+      const title = (chapter.title || chapter.full_label || "").toLowerCase();
+      return label.includes(debouncedFilter) || title.includes(debouncedFilter);
+    });
+  }, [items, debouncedFilter]);
 
   const pendingTitle =
     pendingDelete?.title || pendingDelete?.full_label || t("chapter");
@@ -88,11 +100,26 @@ export function ChapterSidebar({
         <p className="muted chapter-reorder-hint">{t("reorderHint")}</p>
       ) : null}
 
+      {items.length > 4 ? (
+        <label className="chapter-sidebar-filter">
+          <span className="sr-only">{t("filterChapters")}</span>
+          <input
+            type="search"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder={t("filterChaptersPlaceholder")}
+            autoComplete="off"
+          />
+        </label>
+      ) : null}
+
       {items.length === 0 ? (
         <p className="muted chapter-sidebar-empty">{t("emptyChapters")}</p>
+      ) : visibleItems.length === 0 ? (
+        <p className="muted chapter-sidebar-empty">{t("filterChaptersEmpty")}</p>
       ) : (
         <ul className="chapter-sidebar-list">
-          {items.map((chapter, index) => {
+          {visibleItems.map((chapter, index) => {
             const active = chapter.id === activeId;
             const editing = editingId === chapter.id;
             const dragging = dragId === chapter.id;

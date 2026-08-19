@@ -97,6 +97,9 @@ class Book:
     source_path: str = ""
     kind: DocumentKind = "book"
     locale: str = "pt-BR"
+    cover_url: str | None = None
+    cover_key: str | None = None
+    cover_source: str | None = None
 
     @property
     def is_chapter(self) -> bool:

@@ -43,6 +43,14 @@ class BookOut(BaseModel):
     settings: dict[str, Any]
     chapter_count: int = 0
     my_role: str = "owner"
+    cover_url: Optional[str] = None
+    cover_source: Optional[str] = None
+    cover_prompt: Optional[str] = None
+
+
+class CoverGenerateBody(BaseModel):
+    prompt: str = Field(default="", max_length=2000)
+    style: str = Field(default="literary")  # literary | bold | minimal | fantasy
 
 
 class ChapterCreate(BaseModel):

@@ -19,8 +19,17 @@ from app.services.ai_service import (
     run_chapter_ai,
     tokens_used_this_month,
 )
+from app.services.critical_review import list_critical_review_jobs, run_critical_review
 
 router = APIRouter(prefix="/ai", tags=["ai"])
+
+
+class CriticalReviewRequest(BaseModel):
+    book_id: str
+    chapter_id: Optional[str] = None
+    scope: Literal["chapter", "book", "selection"] = "chapter"
+    categories: list[str] = []
+    selection: str = ""
 
 
 class AiRequest(BaseModel):
@@ -116,4 +125,41 @@ def ai_chapter_stream(
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
         },
+    )
+
+
+@router.post("/critical-review")
+def ai_critical_review(
+    body: CriticalReviewRequest,
+    user: CurrentUser,
+    session: Session = Depends(get_session),
+) -> dict:
+    assert_ai_allowed(user)
+    book = get_owned_book(session, user, body.book_id)
+    assert_can_edit(session, user, book)
+    return run_critical_review(
+        session,
+        user=user,
+        book=book,
+        chapter_id=body.chapter_id,
+        scope=body.scope,
+        categories=body.categories,
+        selection=body.selection,
+    )
+
+
+@router.get("/critical-review/jobs")
+def ai_critical_review_jobs(
+    book_id: str,
+    user: CurrentUser,
+    session: Session = Depends(get_session),
+    chapter_id: Optional[str] = None,
+) -> list[dict]:
+    assert_ai_allowed(user)
+    get_owned_book(session, user, book_id)
+    return list_critical_review_jobs(
+        session,
+        user_id=user.id,
+        book_id=book_id,
+        chapter_id=chapter_id,
     )

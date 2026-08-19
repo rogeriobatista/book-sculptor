@@ -52,6 +52,10 @@ class Book(SQLModel, table=True):
     locale: str = Field(default="en")
     mode: str = Field(default="book")  # book | chapter
     settings_json: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+    cover_key: Optional[str] = Field(default=None)
+    cover_url: Optional[str] = Field(default=None)
+    cover_source: Optional[str] = Field(default=None)  # upload | ai
+    cover_prompt: Optional[str] = Field(default=None, sa_column=Column(Text))
     created_at: datetime = Field(default_factory=_utcnow)
     updated_at: datetime = Field(default_factory=_utcnow)
 

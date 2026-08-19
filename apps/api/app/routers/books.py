@@ -14,7 +14,7 @@ from app.db_models import AiJob, Book, BookMember, Chapter, ChapterActivity, Cha
 from app.i18n_labels import normalize_locale
 from app.layout import LayoutSettings, layout_options_payload
 from app.preview import diagnostic_payload, preview_payload
-from app.schemas import BookCreate, BookOut, BookUpdate
+from app.schemas import BookCreate, BookOut, BookUpdate, CoverGenerateBody
 from app.services.book_builder import load_domain_book, settings_from_book
 from app.services.import_service import import_files_into_book
 
@@ -34,6 +34,9 @@ def _book_out(session: Session, book: Book, user: User | None = None) -> BookOut
         settings=book.settings_json or {},
         chapter_count=count,
         my_role=role,
+        cover_url=book.cover_url,
+        cover_source=book.cover_source,
+        cover_prompt=book.cover_prompt,
     )
 
 
@@ -119,6 +122,72 @@ def update_book(
     return _book_out(session, book, user)
 
 
+@router.post("/{book_id}/cover", response_model=BookOut)
+async def upload_cover(
+    book_id: str,
+    user: CurrentUser,
+    session: Session = Depends(get_session),
+    file: UploadFile = File(...),
+) -> BookOut:
+    from app.services.cover_service import save_cover_bytes
+
+    book = get_owned_book(session, user, book_id)
+    assert_can_edit(session, user, book)
+    data = await file.read()
+    content_type = (file.content_type or "application/octet-stream").lower()
+    save_cover_bytes(
+        book,
+        user_id=user.id,
+        data=data,
+        content_type=content_type,
+        source="upload",
+    )
+    session.add(book)
+    session.commit()
+    session.refresh(book)
+    return _book_out(session, book, user)
+
+
+@router.post("/{book_id}/cover/generate", response_model=BookOut)
+def generate_cover(
+    book_id: str,
+    body: CoverGenerateBody,
+    user: CurrentUser,
+    session: Session = Depends(get_session),
+) -> BookOut:
+    from app.services.cover_service import generate_cover_image
+
+    book = get_owned_book(session, user, book_id)
+    assert_can_edit(session, user, book)
+    generate_cover_image(
+        session,
+        user=user,
+        book=book,
+        prompt=body.prompt or "",
+        style=body.style or "literary",
+    )
+    session.refresh(book)
+    return _book_out(session, book, user)
+
+
+@router.delete("/{book_id}/cover", response_model=BookOut)
+def delete_cover(
+    book_id: str,
+    user: CurrentUser,
+    session: Session = Depends(get_session),
+) -> BookOut:
+    from app.services.cover_service import clear_cover
+
+    book = get_owned_book(session, user, book_id)
+    assert_can_edit(session, user, book)
+    clear_cover(book)
+    book.updated_at = datetime.now(timezone.utc)
+    session.add(book)
+    session.commit()
+    session.refresh(book)
+    return _book_out(session, book, user)
+
+
 @router.delete("/{book_id}")
 def delete_book(
     book_id: str,
@@ -135,6 +204,10 @@ def delete_book(
 
 def _delete_book_cascade(session: Session, book: Book) -> None:
     """Remove book and all dependent rows (versions, exports, AI jobs, etc.)."""
+    if book.cover_key:
+        from app.storage import delete_key
+
+        delete_key(book.cover_key)
     chapter_ids = [
         row.id
         for row in session.exec(select(Chapter).where(Chapter.book_id == book.id)).all()

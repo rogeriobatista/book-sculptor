@@ -7,6 +7,7 @@ from ebooklib import epub
 from app.i18n_labels import SPECIAL_SECTION_KINDS
 from app.layout import LayoutSettings
 from app.models import Book, Chapter
+from app.storage import get_bytes
 
 
 def _html_escape(text: str) -> str:
@@ -207,6 +208,19 @@ def export_epub(
     ebook.set_language("pt")
     if book.author:
         ebook.add_author(book.author)
+
+    cover_key = getattr(book, "cover_key", None)
+    if cover_key:
+        cover_bytes = get_bytes(cover_key)
+        if cover_bytes:
+            lower = cover_key.lower()
+            if lower.endswith(".png"):
+                ebook.set_cover("cover.png", cover_bytes)
+            elif lower.endswith(".webp"):
+                # Many EPUB readers reject WebP covers; skip metadata cover.
+                pass
+            else:
+                ebook.set_cover("cover.jpg", cover_bytes)
 
     css = epub.EpubItem(
         uid="style",

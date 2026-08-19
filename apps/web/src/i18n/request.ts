@@ -6,7 +6,7 @@ import en from "../../messages/en.json";
 import ptBR from "../../messages/pt-BR.json";
 import es from "../../messages/es.json";
 
-/** Message catalogs keyed by locale. Bump when adding keys: studio-topbar. */
+/** Message catalogs keyed by locale. Bump when adding keys: landing-v2. */
 const catalogs = {
   en,
   "pt-BR": ptBR,

@@ -63,6 +63,51 @@ def put_bytes(key: str, data: bytes, content_type: str = "application/octet-stre
     return f"/api/v1/files/{quote(key, safe='/')}"
 
 
-def get_local_path(key: str) -> Path | None:
+def get_bytes(key: str) -> bytes | None:
+    if not key:
+        return None
+    if r2_configured():
+        try:
+            client = _s3_client()
+            obj = client.get_object(Bucket=settings.r2_bucket, Key=key)
+            return obj["Body"].read()
+        except Exception:  # noqa: BLE001
+            return None
     path = _local_root() / key
-    return path if path.exists() else None
+    return path.read_bytes() if path.exists() else None
+
+
+def delete_key(key: str) -> None:
+    if not key:
+        return
+    if r2_configured():
+        try:
+            client = _s3_client()
+            client.delete_object(Bucket=settings.r2_bucket, Key=key)
+        except Exception:  # noqa: BLE001
+            pass
+        return
+    path = _local_root() / key
+    if path.exists():
+        path.unlink(missing_ok=True)
+
+
+def get_local_path(key: str) -> Path | None:
+    return resolve_safe_local_path(key)
+
+
+def resolve_safe_local_path(key: str) -> Path | None:
+    """Resolve a storage key under the local root; reject traversal."""
+    if not key or not key.strip():
+        return None
+    root = _local_root().resolve()
+    # Normalize separators and strip leading slashes
+    normalized = key.replace("\\", "/").strip("/")
+    if ".." in normalized.split("/"):
+        return None
+    candidate = (root / normalized).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        return None
+    return candidate if candidate.is_file() else None

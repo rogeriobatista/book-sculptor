@@ -8,13 +8,13 @@ import {
   type ImportMode,
 } from "@/components/ImportManuscriptModal";
 import { useToast } from "@/components/ToastProvider";
-import { type Book, clientApiFetch } from "@/lib/client-api";
-import { useAppAuth } from "@/lib/use-app-auth";
+import { type Book, clientApiFetch, isAbortError } from "@/lib/client-api";
+import { useStableAuth } from "@/lib/use-app-auth";
 
 type Step = "meta" | "start";
 
 export function NewBookForm() {
-  const { getToken } = useAppAuth();
+  const { getTokenRef } = useStableAuth();
   const toast = useToast();
   const locale = useLocale();
   const t = useTranslations("books");
@@ -27,20 +27,20 @@ export function NewBookForm() {
   const [canUseAi, setCanUseAi] = useState(false);
 
   useEffect(() => {
-    let cancelled = false;
+    const ac = new AbortController();
     (async () => {
       try {
-        const token = await getToken();
-        const me = await clientApiFetch<{ plan: string }>("/api/v1/me", token);
-        if (!cancelled) setCanUseAi(me.plan !== "free");
-      } catch {
-        if (!cancelled) setCanUseAi(false);
+        const token = await getTokenRef.current();
+        const me = await clientApiFetch<{ plan: string }>("/api/v1/me", token, {
+          signal: ac.signal,
+        });
+        if (!ac.signal.aborted) setCanUseAi(me.plan !== "free");
+      } catch (err) {
+        if (!isAbortError(err) && !ac.signal.aborted) setCanUseAi(false);
       }
     })();
-    return () => {
-      cancelled = true;
-    };
-  }, [getToken]);
+    return () => ac.abort();
+  }, [getTokenRef]);
 
   async function createBook(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -48,7 +48,7 @@ export function NewBookForm() {
     const loadingId = toast.loading(s("notifyCreatingBook"));
     const form = new FormData(event.currentTarget);
     try {
-      const token = await getToken();
+        const token = await getTokenRef.current();
       const created = await clientApiFetch<Book>("/api/v1/books", token, {
         method: "POST",
         body: JSON.stringify({
@@ -89,7 +89,7 @@ export function NewBookForm() {
     setBusy(true);
     const loadingId = toast.loading(s("notifyImporting"));
     try {
-      const token = await getToken();
+        const token = await getTokenRef.current();
       const form = new FormData();
       files.forEach((file) => form.append("files", file));
       form.append("replace", mode === "replace" ? "true" : "false");
@@ -120,7 +120,7 @@ export function NewBookForm() {
     setBusy(true);
     const loadingId = toast.loading(s("notifyChapterCreating"));
     try {
-      const token = await getToken();
+        const token = await getTokenRef.current();
       await clientApiFetch(`/api/v1/books/${book.id}/chapters`, token, {
         method: "POST",
         body: JSON.stringify({

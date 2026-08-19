@@ -2,8 +2,8 @@
 
 import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useState } from "react";
-import { clientApiFetch } from "@/lib/client-api";
-import { useAppAuth } from "@/lib/use-app-auth";
+import { clientApiFetch, isAbortError } from "@/lib/client-api";
+import { useStableAuth } from "@/lib/use-app-auth";
 
 export type ChapterCommentItem = {
   id: string;
@@ -59,7 +59,7 @@ export function ChapterReviewPanel({
   onCommentsChange,
   onJumpToQuote,
 }: Props) {
-  const { getToken } = useAppAuth();
+  const { getTokenRef } = useStableAuth();
   const t = useTranslations("studio");
   const [tab, setTab] = useState<Tab>("comments");
   const [comments, setComments] = useState<ChapterCommentItem[]>([]);
@@ -70,29 +70,54 @@ export function ChapterReviewPanel({
   const [mode, setMode] = useState<"comment" | "suggestion">("comment");
   const [busy, setBusy] = useState(false);
 
-  const load = useCallback(async () => {
-    const token = await getToken();
-    const [c, v, a] = await Promise.all([
-      clientApiFetch<ChapterCommentItem[]>(
-        `/api/v1/books/${bookId}/chapters/${chapterId}/comments`,
-        token,
-      ),
-      clientApiFetch<ChapterVersionItem[]>(
-        `/api/v1/books/${bookId}/chapters/${chapterId}/versions`,
-        token,
-      ),
-      clientApiFetch<ChapterActivityItem[]>(
-        `/api/v1/books/${bookId}/chapters/${chapterId}/activity`,
-        token,
-      ),
-    ]);
-    setComments(c);
-    setVersions(v);
-    setActivity(a);
-  }, [bookId, chapterId, getToken]);
+  const load = useCallback(
+    async (signal?: AbortSignal) => {
+      const token = await getTokenRef.current();
+      const opts = signal ? { signal } : {};
+      const [c, v, a] = await Promise.all([
+        clientApiFetch<ChapterCommentItem[]>(
+          `/api/v1/books/${bookId}/chapters/${chapterId}/comments`,
+          token,
+          opts,
+        ),
+        clientApiFetch<ChapterVersionItem[]>(
+          `/api/v1/books/${bookId}/chapters/${chapterId}/versions`,
+          token,
+          opts,
+        ),
+        clientApiFetch<ChapterActivityItem[]>(
+          `/api/v1/books/${bookId}/chapters/${chapterId}/activity`,
+          token,
+          opts,
+        ),
+      ]);
+      if (!signal?.aborted) {
+        setComments(c);
+        setVersions(v);
+        setActivity(a);
+      }
+      return { c, v, a };
+    },
+    [bookId, chapterId, getTokenRef],
+  );
 
   useEffect(() => {
-    void load();
+    const ac = new AbortController();
+    load(ac.signal)
+      .then(({ c, v, a }) => {
+        if (ac.signal.aborted) return;
+        setComments(c);
+        setVersions(v);
+        setActivity(a);
+      })
+      .catch((err) => {
+        if (!isAbortError(err) && !ac.signal.aborted) {
+          setComments([]);
+          setVersions([]);
+          setActivity([]);
+        }
+      });
+    return () => ac.abort();
   }, [load]);
 
   useEffect(() => {
@@ -108,7 +133,7 @@ export function ChapterReviewPanel({
     if (mode === "suggestion" && !canEdit) return;
     setBusy(true);
     try {
-      const token = await getToken();
+      const token = await getTokenRef.current();
       await clientApiFetch(
         `/api/v1/books/${bookId}/chapters/${chapterId}/comments`,
         token,
@@ -134,7 +159,7 @@ export function ChapterReviewPanel({
   async function updateComment(id: string, status: string) {
     setBusy(true);
     try {
-      const token = await getToken();
+      const token = await getTokenRef.current();
       await clientApiFetch(
         `/api/v1/books/${bookId}/chapters/${chapterId}/comments/${id}`,
         token,
@@ -151,7 +176,7 @@ export function ChapterReviewPanel({
     if (!canEdit) return;
     setBusy(true);
     try {
-      const token = await getToken();
+      const token = await getTokenRef.current();
       await clientApiFetch(
         `/api/v1/books/${bookId}/chapters/${chapterId}/versions/${versionId}/restore`,
         token,

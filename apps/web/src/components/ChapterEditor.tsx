@@ -17,6 +17,7 @@ import {
   type ChapterCommentItem,
 } from "@/components/ChapterReviewPanel";
 import { EditorAiPanel } from "@/components/EditorAiPanel";
+import { CriticalReviewPanel } from "@/components/CriticalReviewPanel";
 import { EditorToolsPanel, type EditorToolsTab } from "@/components/EditorToolsPanel";
 import { RichTextToolbar } from "@/components/RichTextToolbar";
 import { useToast } from "@/components/ToastProvider";
@@ -125,6 +126,8 @@ export function ChapterEditor({
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const skipNextSync = useRef(false);
   const loadedChapterId = useRef<string | null>(null);
+  const chapterIdRef = useRef(chapter.id);
+  const persistGen = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
 
@@ -209,6 +212,11 @@ export function ChapterEditor({
   }, [selectionQuote]);
 
   useEffect(() => {
+    chapterIdRef.current = chapter.id;
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+    }
     setTitleDraft(chapter.title || "");
     setWordCount(countWords(chapter.content_text || ""));
     if (!editor) return;
@@ -255,11 +263,13 @@ export function ChapterEditor({
   }
 
   async function persist(contentJson: Record<string, unknown>, contentText: string) {
+    const chapterId = chapterIdRef.current;
+    const gen = ++persistGen.current;
     setStatus("saving");
     try {
       const token = await getToken();
       const updated = await clientApiFetch<Chapter>(
-        `/api/v1/books/${bookId}/chapters/${chapter.id}`,
+        `/api/v1/books/${bookId}/chapters/${chapterId}`,
         token,
         {
           method: "PATCH",
@@ -269,11 +279,14 @@ export function ChapterEditor({
           }),
         },
       );
+      if (gen !== persistGen.current || chapterId !== chapterIdRef.current) return;
       skipNextSync.current = true;
       onSaved?.(updated);
       setStatus("saved");
     } catch {
-      setStatus("error");
+      if (gen === persistGen.current && chapterId === chapterIdRef.current) {
+        setStatus("error");
+      }
     }
   }
 
@@ -566,6 +579,20 @@ export function ChapterEditor({
                 onPromptChange={setAiPrompt}
                 onRun={(action, prompt) => void runAi(action, prompt)}
                 onStop={() => abortRef.current?.abort()}
+              />
+            }
+            critiqueSlot={
+              <CriticalReviewPanel
+                bookId={bookId}
+                chapterId={chapter.id}
+                canUseAi={canUseAi}
+                canEdit={canEdit}
+                selectionQuote={selectionQuote}
+                onJumpToQuote={handleJumpToQuote}
+                onPromoted={() => {
+                  setReviewKey((k) => k + 1);
+                  setToolsTab("review");
+                }}
               />
             }
             reviewSlot={

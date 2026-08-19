@@ -50,6 +50,8 @@ class Settings(BaseSettings):
     llm_timeout_seconds: float = 180.0
     # When true, a key is required even for non-OpenAI endpoints.
     llm_require_api_key: bool = False
+    # OpenAI Images model for book covers (DALL·E 3 / gpt-image-*).
+    llm_image_model: str = "dall-e-3"
 
     local_storage_dir: str = ".storage"
 

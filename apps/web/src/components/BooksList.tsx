@@ -1,11 +1,12 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ConfirmModal } from "@/components/ConfirmModal";
 import { useToast } from "@/components/ToastProvider";
 import { Link } from "@/i18n/navigation";
-import { type Book, clientApiFetch } from "@/lib/client-api";
+import { type Book, clientApiFetch, isAbortError } from "@/lib/client-api";
+import { useDebouncedValue } from "@/lib/use-debounce";
 import { useStableAuth } from "@/lib/use-app-auth";
 
 export function BooksList() {
@@ -19,28 +20,40 @@ export function BooksList() {
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<Book | null>(null);
+  const [query, setQuery] = useState("");
+  const debouncedQuery = useDebouncedValue(query.trim().toLowerCase(), 350);
 
   useEffect(() => {
     if (!isSignedIn) {
       setLoading(false);
       return;
     }
-    let cancelled = false;
+    const ac = new AbortController();
     (async () => {
       try {
         const token = await getTokenRef.current();
-        const data = await clientApiFetch<Book[]>("/api/v1/books", token);
-        if (!cancelled) setBooks(data);
+        const data = await clientApiFetch<Book[]>("/api/v1/books", token, {
+          signal: ac.signal,
+        });
+        if (!ac.signal.aborted) setBooks(data);
       } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : "Error");
+        if (!isAbortError(err) && !ac.signal.aborted) {
+          setError(err instanceof Error ? err.message : "Error");
+        }
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!ac.signal.aborted) setLoading(false);
       }
     })();
-    return () => {
-      cancelled = true;
-    };
+    return () => ac.abort();
   }, [isSignedIn, getTokenRef]);
+
+  const filteredBooks = useMemo(() => {
+    if (!debouncedQuery) return books;
+    return books.filter((book) => {
+      const haystack = `${book.title} ${book.author} ${book.locale}`.toLowerCase();
+      return haystack.includes(debouncedQuery);
+    });
+  }, [books, debouncedQuery]);
 
   async function deleteBook(bookId: string) {
     setBusyId(bookId);
@@ -80,8 +93,24 @@ export function BooksList() {
 
   return (
     <>
-      <ul className="list-stack">
-        {books.map((book) => (
+      <div className="books-list-toolbar">
+        <label className="books-search">
+          <span className="sr-only">{t("searchBooks")}</span>
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder={t("searchBooksPlaceholder")}
+            autoComplete="off"
+          />
+        </label>
+      </div>
+
+      {!filteredBooks.length ? (
+        <p className="muted books-search-empty">{t("searchBooksEmpty")}</p>
+      ) : (
+        <ul className="list-stack">
+          {filteredBooks.map((book) => (
             <li key={book.id} className="book-row-card">
               <Link
                 href={{ pathname: "/books/[bookId]", params: { bookId: book.id } }}
@@ -104,8 +133,9 @@ export function BooksList() {
                 </button>
               </div>
             </li>
-        ))}
-      </ul>
+          ))}
+        </ul>
+      )}
 
       <ConfirmModal
         open={Boolean(pendingDelete)}

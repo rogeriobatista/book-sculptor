@@ -3,7 +3,7 @@
 import { useTranslations } from "next-intl";
 import type { ReactNode } from "react";
 
-export type EditorToolsTab = "ai" | "review" | "structure";
+export type EditorToolsTab = "ai" | "critique" | "review" | "structure";
 
 type Props = {
   activeTab: EditorToolsTab;
@@ -12,6 +12,7 @@ type Props = {
   selectionActive: boolean;
   openComments: number;
   aiSlot: ReactNode;
+  critiqueSlot: ReactNode;
   reviewSlot: ReactNode;
   structureSlot: ReactNode;
 };
@@ -23,6 +24,7 @@ export function EditorToolsPanel({
   selectionActive,
   openComments,
   aiSlot,
+  critiqueSlot,
   reviewSlot,
   structureSlot,
 }: Props) {
@@ -30,6 +32,11 @@ export function EditorToolsPanel({
 
   const tabs: { id: EditorToolsTab; label: string; hint: string; badge?: number }[] = [
     { id: "ai", label: t("toolsTabAi"), hint: t("toolsTabAiHint") },
+    {
+      id: "critique",
+      label: t("toolsTabCritique"),
+      hint: t("toolsTabCritiqueHint"),
+    },
     {
       id: "review",
       label: t("toolsTabReview"),
@@ -79,6 +86,7 @@ export function EditorToolsPanel({
 
       <div className="editor-tools-body" role="tabpanel">
         {activeTab === "ai" ? aiSlot : null}
+        {activeTab === "critique" ? critiqueSlot : null}
         {activeTab === "review" ? reviewSlot : null}
         {activeTab === "structure" ? structureSlot : null}
       </div>
