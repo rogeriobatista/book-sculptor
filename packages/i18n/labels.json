@@ -1,0 +1,23 @@
+{
+  "en": {
+    "toc": "Table of Contents",
+    "prologue": "Prologue",
+    "epilogue": "Epilogue",
+    "chapter": "Chapter",
+    "part": "Part"
+  },
+  "pt-BR": {
+    "toc": "Sumário",
+    "prologue": "Prólogo",
+    "epilogue": "Epílogo",
+    "chapter": "Capítulo",
+    "part": "Parte"
+  },
+  "es": {
+    "toc": "Índice",
+    "prologue": "Prólogo",
+    "epilogue": "Epílogo",
+    "chapter": "Capítulo",
+    "part": "Parte"
+  }
+}

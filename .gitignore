@@ -8,10 +8,18 @@ dist/
 build/
 .DS_Store
 Thumbs.db
-/saida.*
-*.egg-info/
 .exports/
-.venv/
-venv/
+.storage/
+.data/
 .idea/
 .vscode/
+.env
+.env.local
+apps/api/.env
+apps/api/.data/
+apps/api/.storage/
+apps/web/.env.local
+apps/web/node_modules/
+apps/web/.next/
+*.pdf
+!Ashen Crown.pdf
