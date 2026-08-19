@@ -58,19 +58,15 @@ export function LandingEffects({ chapters, scrollHint, children }: Props) {
       doc.style.setProperty("--landing-scroll-y", `${scrollTop}px`);
 
       if (!reducedMotion) {
-        const heroContent = root.querySelector<HTMLElement>(".hero-content");
         const heroSection = root.querySelector<HTMLElement>(".hero");
-        if (heroContent && heroSection) {
+        if (heroSection) {
           const heroTop = heroSection.getBoundingClientRect().top;
           const heroHeight = heroSection.offsetHeight || 1;
           const heroProgress = Math.min(
             1,
             Math.max(0, -heroTop / (heroHeight * 0.85))
           );
-          heroContent.style.setProperty(
-            "--hero-scroll",
-            String(heroProgress)
-          );
+          heroSection.style.setProperty("--hero-scroll", String(heroProgress));
         }
       }
     };

@@ -1034,6 +1034,7 @@ textarea {
 
 .hero {
   position: relative;
+  --hero-scroll: 0;
   min-height: calc(100vh - 4.5rem);
   display: grid;
   place-items: center;
@@ -1044,35 +1045,67 @@ textarea {
 .hero-atmosphere {
   position: absolute;
   inset: 0;
-  background:
-    radial-gradient(ellipse 90% 60% at 12% 18%, rgba(15, 92, 76, 0.22), transparent 58%),
-    radial-gradient(ellipse 70% 55% at 88% 80%, rgba(42, 111, 95, 0.16), transparent 52%),
-    linear-gradient(155deg, #d7dfd9 0%, #e8ebe8 45%, #c5d0cb 100%);
   z-index: 0;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--paper-deep) 40%, var(--paper));
+}
+
+.hero-backdrop {
+  position: absolute;
+  inset: -4%;
+  background-image: url("/images/hero-backdrop.svg");
+  background-size: cover;
+  background-position: center 62%;
+  background-repeat: no-repeat;
+  transform: scale(1.06) translateY(calc(var(--hero-scroll, 0) * -32px));
+  will-change: transform;
+}
+
+.hero-backdrop-glow {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background:
+    radial-gradient(
+      ellipse 62% 52% at 50% 34%,
+      color-mix(in srgb, var(--paper) 88%, transparent) 0%,
+      color-mix(in srgb, var(--paper) 42%, transparent) 42%,
+      transparent 72%
+    ),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--paper) 50%, transparent) 0%,
+      transparent 32%,
+      transparent 68%,
+      color-mix(in srgb, var(--paper) 40%, transparent) 100%
+    );
+  pointer-events: none;
 }
 
 .hero-atmosphere::before {
   content: "";
   position: absolute;
   inset: 0;
-  opacity: 0.28;
+  opacity: 0.14;
   background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.45'/%3E%3C/svg%3E");
-  mix-blend-mode: multiply;
+  mix-blend-mode: soft-light;
   pointer-events: none;
+  z-index: 1;
 }
 
 .hero-manuscript {
   position: absolute;
   inset: 0;
+  z-index: 2;
   background:
-    linear-gradient(90deg, transparent 0 46%, rgba(20, 32, 24, 0.06) 46% 54%, transparent 54%),
-    repeating-linear-gradient(
-      180deg,
-      transparent 0 1.55rem,
-      rgba(20, 32, 24, 0.045) 1.55rem 1.6rem
+    linear-gradient(
+      90deg,
+      transparent 0 calc(50% - 1px),
+      color-mix(in srgb, var(--accent) 6%, transparent) calc(50% - 1px) calc(50% + 1px),
+      transparent calc(50% + 1px)
     );
-  mask-image: radial-gradient(ellipse 75% 70% at 50% 45%, black 20%, transparent 75%);
-  animation: manuscript-drift 14s ease-in-out infinite alternate;
+  opacity: 0.55;
+  mask-image: radial-gradient(ellipse 68% 58% at 50% 42%, black 15%, transparent 72%);
   pointer-events: none;
 }
 
@@ -1650,25 +1683,44 @@ html[data-theme="dark"] .landing-chapter:not(.hero)::before {
 }
 
 html[data-theme="dark"] .hero-atmosphere {
+  background: color-mix(in srgb, var(--paper-deep) 55%, #0a0e0c);
+}
+
+html[data-theme="dark"] .hero-backdrop {
+  background-image: url("/images/hero-backdrop-dark.svg");
+}
+
+html[data-theme="dark"] .hero-backdrop-glow {
   background:
-    radial-gradient(ellipse 90% 60% at 12% 18%, rgba(69, 184, 150, 0.2), transparent 58%),
-    radial-gradient(ellipse 70% 55% at 88% 80%, rgba(45, 120, 100, 0.14), transparent 52%),
-    linear-gradient(155deg, #0a0e0c 0%, #121816 45%, #1a221e 100%);
+    radial-gradient(
+      ellipse 62% 52% at 50% 34%,
+      color-mix(in srgb, var(--paper) 72%, transparent) 0%,
+      color-mix(in srgb, var(--paper-deep) 38%, transparent) 42%,
+      transparent 72%
+    ),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--paper-deep) 55%, transparent) 0%,
+      transparent 32%,
+      transparent 68%,
+      color-mix(in srgb, var(--paper-deep) 50%, transparent) 100%
+    );
 }
 
 html[data-theme="dark"] .hero-atmosphere::before {
-  opacity: 0.2;
+  opacity: 0.18;
   mix-blend-mode: soft-light;
 }
 
 html[data-theme="dark"] .hero-manuscript {
   background:
-    linear-gradient(90deg, transparent 0 46%, rgba(230, 235, 232, 0.05) 46% 54%, transparent 54%),
-    repeating-linear-gradient(
-      180deg,
-      transparent 0 1.55rem,
-      rgba(230, 235, 232, 0.04) 1.55rem 1.6rem
+    linear-gradient(
+      90deg,
+      transparent 0 calc(50% - 1px),
+      color-mix(in srgb, var(--accent) 10%, transparent) calc(50% - 1px) calc(50% + 1px),
+      transparent calc(50% + 1px)
     );
+  opacity: 0.65;
 }
 
 html[data-theme="dark"] .landing-audience {
@@ -3339,6 +3391,10 @@ html[data-theme="dark"] .pricing-footer-cta {
   .hero-content {
     transform: none;
     opacity: 1;
+  }
+
+  .hero-backdrop {
+    transform: scale(1.04);
   }
 
   .landing-chapter:not(.hero) h2,

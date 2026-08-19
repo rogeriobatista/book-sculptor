@@ -123,6 +123,8 @@ export default async function LandingPage({ params }: Props) {
         {/* —— Hero —— */}
         <section className="hero landing-chapter" data-chapter="prologue">
           <div className="hero-atmosphere" aria-hidden="true">
+            <div className="hero-backdrop" />
+            <div className="hero-backdrop-glow" />
             <div className="hero-manuscript" />
           </div>
           <div className="hero-content">
