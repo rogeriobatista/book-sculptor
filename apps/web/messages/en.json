@@ -115,7 +115,19 @@
     "finalTitle": "Start today. Publish when you are ready.",
     "finalBody": "Open a free project, let AI help you write, and export a book that already looks like a book.",
     "finalCta": "Create my first book",
-    "finalCtaSecondary": "See all pricing"
+    "finalCtaSecondary": "See all pricing",
+    "scrollHint": "Turn the page",
+    "marginNote": "— margin note —",
+    "chapterPrologue": "Cover",
+    "chapterAudience": "For every author",
+    "chapterFeatures": "The studio",
+    "chapterPath": "Three steps",
+    "chapterExamples": "Use cases",
+    "chapterPricing": "Plans",
+    "chapterFormats": "Exports",
+    "chapterStudio": "Studio",
+    "chapterSubscribe": "Why subscribe",
+    "chapterEpilogue": "Begin"
   },
   "pricing": {
     "kicker": "Pricing",

@@ -115,7 +115,19 @@
     "finalTitle": "Comece hoje. Publique quando estiver pronto.",
     "finalBody": "Abra um projeto gratuito, deixe a IA ajudar na escrita e exporte um livro que já parece um livro.",
     "finalCta": "Criar meu primeiro livro",
-    "finalCtaSecondary": "Ver todos os preços"
+    "finalCtaSecondary": "Ver todos os preços",
+    "scrollHint": "Vire a página",
+    "marginNote": "— nota de margem —",
+    "chapterPrologue": "Capa",
+    "chapterAudience": "Para todo autor",
+    "chapterFeatures": "O estúdio",
+    "chapterPath": "Três passos",
+    "chapterExamples": "Casos de uso",
+    "chapterPricing": "Planos",
+    "chapterFormats": "Exportações",
+    "chapterStudio": "Studio",
+    "chapterSubscribe": "Por que assinar",
+    "chapterEpilogue": "Começar"
   },
   "pricing": {
     "kicker": "Preços",

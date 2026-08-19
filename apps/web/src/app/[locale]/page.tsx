@@ -1,5 +1,8 @@
 import { getTranslations, setRequestLocale } from "next-intl/server";
+import type { CSSProperties } from "react";
 import { Link } from "@/i18n/navigation";
+import { LandingEffects } from "@/components/landing/LandingEffects";
+import { LandingInkHeadline } from "@/components/landing/LandingInkHeadline";
 
 type Props = {
   params: Promise<{ locale: string }>;
@@ -101,17 +104,31 @@ export default async function LandingPage({ params }: Props) {
     { title: t("reason4Title"), body: t("reason4Body") },
   ];
 
+  const chapters = [
+    { id: "prologue", marker: "◆", label: t("chapterPrologue") },
+    { id: "audience", marker: "I", label: t("chapterAudience") },
+    { id: "features", marker: "II", label: t("chapterFeatures") },
+    { id: "path", marker: "III", label: t("chapterPath") },
+    { id: "examples", marker: "IV", label: t("chapterExamples") },
+    { id: "pricing", marker: "V", label: t("chapterPricing") },
+    { id: "formats", marker: "VI", label: t("chapterFormats") },
+    { id: "studio", marker: "VII", label: t("chapterStudio") },
+    { id: "subscribe", marker: "VIII", label: t("chapterSubscribe") },
+    { id: "epilogue", marker: "◆", label: t("chapterEpilogue") },
+  ];
+
   return (
-    <div className="landing">
-      {/* —— Hero —— */}
-      <section className="hero">
-        <div className="hero-atmosphere" aria-hidden="true">
-          <div className="hero-manuscript" />
-        </div>
-        <div className="hero-content">
-          <p className="hero-kicker">{common("appName")}</p>
-          <h1 className="hero-headline">{t("headline")}</h1>
-          <p className="hero-subhead">{t("subhead")}</p>
+    <LandingEffects chapters={chapters} scrollHint={t("scrollHint")}>
+      <div className="landing">
+        {/* —— Hero —— */}
+        <section className="hero landing-chapter" data-chapter="prologue">
+          <div className="hero-atmosphere" aria-hidden="true">
+            <div className="hero-manuscript" />
+          </div>
+          <div className="hero-content">
+            <p className="hero-kicker">{common("appName")}</p>
+            <LandingInkHeadline text={t("headline")} />
+            <p className="hero-subhead">{t("subhead")}</p>
           <div className="cta-group">
             <Link href="/books/new" className="btn btn-primary">
               {t("cta")}
@@ -125,7 +142,10 @@ export default async function LandingPage({ params }: Props) {
       </section>
 
       {/* —— Audience + quick CTA —— */}
-      <section className="landing-section landing-audience">
+      <section
+        className="landing-section landing-audience landing-chapter"
+        data-chapter="audience"
+      >
         <div className="landing-inner landing-split">
           <div>
             <h2>{t("audienceTitle")}</h2>
@@ -140,7 +160,10 @@ export default async function LandingPage({ params }: Props) {
       </section>
 
       {/* —— Feature grid —— */}
-      <section className="landing-section landing-features">
+      <section
+        className="landing-section landing-features landing-chapter"
+        data-chapter="features"
+      >
         <div className="landing-inner">
           <header className="landing-section-head">
             <h2>{t("featuresTitle")}</h2>
@@ -158,7 +181,11 @@ export default async function LandingPage({ params }: Props) {
       </section>
 
       {/* —— Mid CTA band —— */}
-      <section className="landing-cta-band" aria-label={t("midCtaTitle")}>
+      <section
+        className="landing-cta-band"
+        aria-label={t("midCtaTitle")}
+        style={{ "--margin-note": `"${t("marginNote")}"` } as CSSProperties}
+      >
         <div className="landing-inner landing-cta-band-inner">
           <div>
             <h2>{t("midCtaTitle")}</h2>
@@ -171,7 +198,10 @@ export default async function LandingPage({ params }: Props) {
       </section>
 
       {/* —— How it works —— */}
-      <section className="landing-section landing-path">
+      <section
+        className="landing-section landing-path landing-chapter"
+        data-chapter="path"
+      >
         <div className="landing-inner">
           <h2>{t("pathTitle")}</h2>
           <p className="landing-lead">{t("pathLead")}</p>
@@ -201,7 +231,11 @@ export default async function LandingPage({ params }: Props) {
       </section>
 
       {/* —— Use-case examples —— */}
-      <section id="examples" className="landing-section landing-examples">
+      <section
+        id="examples"
+        className="landing-section landing-examples landing-chapter"
+        data-chapter="examples"
+      >
         <div className="landing-inner">
           <header className="landing-section-head">
             <h2>{t("examplesTitle")}</h2>
@@ -227,7 +261,11 @@ export default async function LandingPage({ params }: Props) {
       </section>
 
       {/* —— Pricing teaser —— */}
-      <section id="pricing" className="landing-section landing-pricing-teaser">
+      <section
+        id="pricing"
+        className="landing-section landing-pricing-teaser landing-chapter"
+        data-chapter="pricing"
+      >
         <div className="landing-inner">
           <header className="landing-section-head landing-section-head-center">
             <h2>{t("pricingTeaserTitle")}</h2>
@@ -261,7 +299,10 @@ export default async function LandingPage({ params }: Props) {
       </section>
 
       {/* —— Formats —— */}
-      <section className="landing-section landing-formats">
+      <section
+        className="landing-section landing-formats landing-chapter"
+        data-chapter="formats"
+      >
         <div className="landing-inner landing-formats-grid">
           <div>
             <h2>{t("formatsTitle")}</h2>
@@ -279,7 +320,11 @@ export default async function LandingPage({ params }: Props) {
       </section>
 
       {/* —— Studio —— */}
-      <section id="studio" className="landing-section landing-studio">
+      <section
+        id="studio"
+        className="landing-section landing-studio landing-chapter"
+        data-chapter="studio"
+      >
         <div className="landing-inner">
           <p className="studio-kicker">Studio</p>
           <h2>{t("studioTitle")}</h2>
@@ -304,7 +349,10 @@ export default async function LandingPage({ params }: Props) {
       </section>
 
       {/* —— Why subscribe —— */}
-      <section className="landing-section landing-reasons">
+      <section
+        className="landing-section landing-reasons landing-chapter"
+        data-chapter="subscribe"
+      >
         <div className="landing-inner">
           <header className="landing-section-head">
             <h2>{t("subscribeTitle")}</h2>
@@ -330,7 +378,10 @@ export default async function LandingPage({ params }: Props) {
       </section>
 
       {/* —— Final CTA —— */}
-      <section className="landing-section landing-final">
+      <section
+        className="landing-section landing-final landing-chapter"
+        data-chapter="epilogue"
+      >
         <div className="landing-inner landing-final-inner">
           <h2>{t("finalTitle")}</h2>
           <p className="landing-lead">{t("finalBody")}</p>
@@ -344,6 +395,7 @@ export default async function LandingPage({ params }: Props) {
           </div>
         </div>
       </section>
-    </div>
+      </div>
+    </LandingEffects>
   );
 }
