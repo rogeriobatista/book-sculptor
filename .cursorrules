@@ -1,0 +1,4 @@
+- Backend: Python com tipagem estrita (Pydantic) e código assíncrono.
+- Frontend: Next.js (App Router), React, TypeScript strict mode (nunca use 'any'), Tailwind CSS.
+- Foco do produto: Ferramenta de IA voltada para escritores (edição, revisão e assistência de texto com controle humano).
+- Padrão de código: Clean Code, componentes modulares e tratamento robusto de erros.

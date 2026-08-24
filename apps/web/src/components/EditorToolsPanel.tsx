@@ -85,10 +85,10 @@ export function EditorToolsPanel({
       </div>
 
       <div className="editor-tools-body" role="tabpanel">
-        {activeTab === "ai" ? aiSlot : null}
-        {activeTab === "critique" ? critiqueSlot : null}
-        {activeTab === "review" ? reviewSlot : null}
-        {activeTab === "structure" ? structureSlot : null}
+        <div hidden={activeTab !== "ai"}>{aiSlot}</div>
+        <div hidden={activeTab !== "critique"}>{critiqueSlot}</div>
+        <div hidden={activeTab !== "review"}>{reviewSlot}</div>
+        <div hidden={activeTab !== "structure"}>{structureSlot}</div>
       </div>
     </aside>
   );

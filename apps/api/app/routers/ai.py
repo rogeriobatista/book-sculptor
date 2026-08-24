@@ -19,7 +19,11 @@ from app.services.ai_service import (
     run_chapter_ai,
     tokens_used_this_month,
 )
-from app.services.critical_review import list_critical_review_jobs, run_critical_review
+from app.services.critical_review import (
+    get_latest_critical_review,
+    list_critical_review_jobs,
+    run_critical_review,
+)
 
 router = APIRouter(prefix="/ai", tags=["ai"])
 
@@ -45,6 +49,7 @@ class AiRequest(BaseModel):
         "dialogue",
         "simplify",
         "finalize",
+        "consistent",
     ] = "generate"
     prompt: str = ""
     selection: str = ""
@@ -158,6 +163,23 @@ def ai_critical_review_jobs(
     assert_ai_allowed(user)
     get_owned_book(session, user, book_id)
     return list_critical_review_jobs(
+        session,
+        user_id=user.id,
+        book_id=book_id,
+        chapter_id=chapter_id,
+    )
+
+
+@router.get("/critical-review/latest")
+def ai_critical_review_latest(
+    book_id: str,
+    user: CurrentUser,
+    session: Session = Depends(get_session),
+    chapter_id: Optional[str] = None,
+) -> dict | None:
+    assert_ai_allowed(user)
+    get_owned_book(session, user, book_id)
+    return get_latest_critical_review(
         session,
         user_id=user.id,
         book_id=book_id,

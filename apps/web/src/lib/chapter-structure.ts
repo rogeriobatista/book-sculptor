@@ -45,6 +45,7 @@ export function chapterShortTitle(chapter: Chapter): string {
 export const CHAPTER_KINDS = [
   "dedication",
   "prologue",
+  "part",
   "chapter",
   "epilogue",
   "afterword",
@@ -54,11 +55,87 @@ export const CHAPTER_KINDS = [
 
 export type ChapterKind = (typeof CHAPTER_KINDS)[number];
 
+export type ChapterTreeNode = {
+  chapter: Chapter;
+  children: ChapterTreeNode[];
+};
+
+export function buildChapterTree(chapters: Chapter[]): ChapterTreeNode[] {
+  const sorted = [...chapters].sort((a, b) => a.position - b.position);
+  const nodes = new Map<string, ChapterTreeNode>();
+  for (const chapter of sorted) {
+    nodes.set(chapter.id, { chapter, children: [] });
+  }
+  const roots: ChapterTreeNode[] = [];
+  for (const chapter of sorted) {
+    const node = nodes.get(chapter.id);
+    if (!node) continue;
+    if (chapter.parent_id && nodes.has(chapter.parent_id)) {
+      nodes.get(chapter.parent_id)?.children.push(node);
+    } else {
+      roots.push(node);
+    }
+  }
+  return roots;
+}
+
+export function filterChapterIdsWithAncestors(
+  chapters: Chapter[],
+  query: string,
+): Set<string> | null {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return null;
+  const byId = new Map(chapters.map((chapter) => [chapter.id, chapter]));
+  const visible = new Set<string>();
+  for (const chapter of chapters) {
+    const haystack = `${chapter.full_label} ${chapter.title}`.toLowerCase();
+    if (!haystack.includes(needle)) continue;
+    visible.add(chapter.id);
+    let parentId = chapter.parent_id;
+    while (parentId && byId.has(parentId)) {
+      visible.add(parentId);
+      parentId = byId.get(parentId)?.parent_id ?? null;
+    }
+  }
+  return visible;
+}
+
+export function flattenChapterTree(
+  roots: ChapterTreeNode[],
+  collapsedPartIds: Set<string>,
+  visibleIds: Set<string> | null,
+): { node: ChapterTreeNode; depth: number }[] {
+  const rows: { node: ChapterTreeNode; depth: number }[] = [];
+
+  function walk(nodes: ChapterTreeNode[], depth: number) {
+    for (const node of nodes) {
+      if (visibleIds && !visibleIds.has(node.chapter.id)) {
+        const hasVisibleChild = node.children.some(
+          (child) =>
+            visibleIds.has(child.chapter.id) ||
+            child.children.some((grand) => visibleIds.has(grand.chapter.id)),
+        );
+        if (!hasVisibleChild) continue;
+      }
+      rows.push({ node, depth });
+      const isPart = node.chapter.kind === "part";
+      const collapsed = isPart && collapsedPartIds.has(node.chapter.id);
+      if (!collapsed && node.children.length > 0) {
+        walk(node.children, depth + 1);
+      }
+    }
+  }
+
+  walk(roots, 0);
+  return rows;
+}
+
 export function kindTranslationKey(
   kind: string,
 ):
   | "kindDedication"
   | "kindPrologue"
+  | "kindPart"
   | "kindChapter"
   | "kindEpilogue"
   | "kindAfterword"
@@ -66,6 +143,7 @@ export function kindTranslationKey(
   | "kindOther" {
   if (kind === "dedication") return "kindDedication";
   if (kind === "prologue") return "kindPrologue";
+  if (kind === "part") return "kindPart";
   if (kind === "epilogue") return "kindEpilogue";
   if (kind === "afterword") return "kindAfterword";
   if (kind === "appendix") return "kindAppendix";

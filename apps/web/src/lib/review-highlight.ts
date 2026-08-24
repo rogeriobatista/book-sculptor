@@ -7,6 +7,7 @@ export type ReviewCommentRef = {
   kind: string;
   status: string;
   quote: string;
+  proposed_text?: string | null;
 };
 
 export const ReviewHighlight = Mark.create({
@@ -30,6 +31,20 @@ export const ReviewHighlight = Mark.create({
         default: "open",
         parseHTML: (element) => element.getAttribute("data-review-status") || "open",
         renderHTML: (attributes) => ({ "data-review-status": attributes.status }),
+      },
+      proposedText: {
+        default: null,
+        parseHTML: (element) => element.getAttribute("data-proposed-text"),
+        renderHTML: (attributes) =>
+          attributes.proposedText
+            ? { "data-proposed-text": attributes.proposedText }
+            : {},
+      },
+      trackChange: {
+        default: false,
+        parseHTML: (element) => element.getAttribute("data-track-change") === "true",
+        renderHTML: (attributes) =>
+          attributes.trackChange ? { "data-track-change": "true" } : {},
       },
     };
   },
@@ -82,6 +97,14 @@ export function stripReviewMarksFromJson(node: JSONContent): JSONContent {
   return next;
 }
 
+function isTrackChangeSuggestion(comment: ReviewCommentRef): boolean {
+  return (
+    comment.kind === "suggestion" &&
+    comment.status === "open" &&
+    Boolean(comment.proposed_text?.trim())
+  );
+}
+
 export function applyReviewHighlights(editor: Editor, comments: ReviewCommentRef[]) {
   const markType = editor.state.schema.marks.reviewHighlight;
   if (!markType) return;
@@ -104,6 +127,7 @@ export function applyReviewHighlights(editor: Editor, comments: ReviewCommentRef
     const rangeKey = `${range.from}:${range.to}`;
     if (claimed.has(rangeKey)) continue;
     claimed.add(rangeKey);
+    const trackChange = isTrackChangeSuggestion(comment);
     tr = tr.addMark(
       range.from,
       range.to,
@@ -111,6 +135,8 @@ export function applyReviewHighlights(editor: Editor, comments: ReviewCommentRef
         commentId: comment.id,
         kind: comment.kind,
         status: comment.status,
+        proposedText: trackChange ? comment.proposed_text!.trim() : null,
+        trackChange,
       }),
     );
   }
@@ -123,4 +149,16 @@ export function jumpToQuote(editor: Editor, quote: string): boolean {
   if (!range) return false;
   editor.chain().focus().setTextSelection(range).scrollIntoView().run();
   return true;
+}
+
+export function readingCommentIdFromEvent(target: EventTarget | null): string | null {
+  if (!(target instanceof Element)) return null;
+  const mark = target.closest("mark.review-text-mark[data-comment-id]");
+  return mark?.getAttribute("data-comment-id") || null;
+}
+
+export function isOpenTrackChangeMark(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false;
+  const mark = target.closest("mark.review-text-mark[data-track-change='true']");
+  return Boolean(mark);
 }

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -24,8 +25,15 @@ from app.services.ai_service import (
 settings = get_settings()
 
 JOB_PREFIX = "[critical-review]"
-MAX_CHAPTER_CHARS = 18_000
+MAX_CHAPTER_CHARS = 12_000
 MAX_BOOK_CHARS = 32_000
+# Full-book reviews are chunked so proxy/client timeouts and local LLMs don't hang.
+MAX_BOOK_CHAPTERS = 8
+CHAPTER_LLM_TIMEOUT = 55.0
+SINGLE_LLM_TIMEOUT = 90.0
+BOOK_WALL_CLOCK_SECONDS = 140.0
+REVIEW_MAX_TOKENS = 1800
+FINDINGS_CAP = 18
 
 CATEGORIES = {
     "spelling": "Spelling and typographic errors",
@@ -38,6 +46,21 @@ CATEGORIES = {
 
 _VALID_CATEGORIES = set(CATEGORIES)
 _VALID_SEVERITIES = {"minor", "moderate", "major"}
+_SEVERITY_RANK = {"major": 0, "moderate": 1, "minor": 2}
+_SEVERITY_SCORE_PENALTY = {"major": 8, "moderate": 4, "minor": 2}
+
+
+def _score_and_counts(findings: list[dict[str, Any]]) -> tuple[int, dict[str, int]]:
+    """Grammarly-style 0–100 quality score + per-category counts."""
+    counts = {key: 0 for key in CATEGORIES}
+    score = 100
+    for finding in findings:
+        category = str(finding.get("category") or "")
+        if category in counts:
+            counts[category] += 1
+        severity = str(finding.get("severity") or "moderate")
+        score -= _SEVERITY_SCORE_PENALTY.get(severity, 4)
+    return max(0, min(100, score)), counts
 
 
 def run_critical_review(
@@ -55,49 +78,8 @@ def run_critical_review(
     if not cats:
         cats = list(_VALID_CATEGORIES)
 
-    chapters, manuscript, chapter_map = _build_manuscript(
-        session, book, chapter_id, scope, selection
-    )
-    if not manuscript.strip():
-        raise HTTPException(400, "No manuscript text to review.")
-
-    char_count = len(manuscript)
-    token_estimate = max(2500, char_count // 3)
-    assert_quota(session, user, estimate=token_estimate)
-
     locale = normalize_locale(book.locale)
     language = LOCALE_NAMES.get(locale, "English")
-    cat_lines = "\n".join(f"- {key}: {CATEGORIES[key]}" for key in cats)
-
-    system = (
-        f"You are a senior literary editor reviewing a manuscript in {language}. "
-        "Perform a professional critical review focused on the requested categories. "
-        "Return ONLY valid JSON (no markdown fences) with this shape:\n"
-        '{"summary":"2-4 sentence overall assessment","findings":[{'
-        '"id":"f1","category":"spelling","severity":"minor|moderate|major",'
-        '"chapter_id":"uuid or null","chapter_label":"Chapter 1",'
-        '"quote":"exact excerpt copied verbatim from the manuscript (15-120 chars)",'
-        '"message":"clear explanation for the author or editor",'
-        '"suggested_fix":"replacement text when applicable, else empty string"'
-        "}]}\n"
-        f"Review categories to apply:\n{cat_lines}\n"
-        "Rules:\n"
-        "- quote MUST appear exactly in the manuscript (copy verbatim).\n"
-        "- Prefer actionable, specific findings over vague praise.\n"
-        "- Limit to the 12 most important findings.\n"
-        "- Use chapter_id from [CHAPTER_ID:...] markers when scope is the full book.\n"
-        "- severity: minor = polish; moderate = should fix; major = blocks quality.\n"
-        "- For spelling/grammar with a clear fix, always provide suggested_fix.\n"
-        "- Do not invent plot details not present in the text.\n"
-        "- Write message and summary in the manuscript language."
-    )
-
-    user_prompt = (
-        f"Book title: {book.title or '(untitled)'}\n"
-        f"Author: {book.author or '(unknown)'}\n"
-        f"Scope: {scope}\n"
-        f"Manuscript ({char_count} chars):\n\n{manuscript}"
-    )
 
     job = AiJob(
         book_id=book.id,
@@ -114,41 +96,54 @@ def run_critical_review(
     session.refresh(job)
 
     try:
-        if not settings.llm_live_enabled:
-            parsed = _offline_findings(manuscript, cats, chapter_map, language)
-            tokens = max(500, char_count // 8)
-        else:
-            text, tokens = _chat_completion(
-                model=model_for_plan(user.plan),
-                system=system,
-                user_prompt=user_prompt,
-                temperature=0.2,
+        if scope == "book" and settings.llm_live_enabled:
+            result = _review_book_chunked(
+                session,
+                user=user,
+                book=book,
+                cats=cats,
+                language=language,
+                job_id=job.id,
             )
-            parsed = _parse_review_json(text, chapter_map)
-
-        findings = _normalize_findings(parsed.get("findings") or [], chapter_map)
-        summary = str(parsed.get("summary") or "").strip()
-        if not summary:
-            summary = _default_summary(findings, language)
-
-        result = {
-            "job_id": job.id,
-            "scope": scope,
-            "categories": cats,
-            "summary": summary,
-            "findings": findings,
-            "chapter_count": len(chapters),
-            "char_count": char_count,
-        }
+        else:
+            result = _review_single_scope(
+                session,
+                user=user,
+                book=book,
+                chapter_id=chapter_id,
+                scope=scope,
+                cats=cats,
+                selection=selection,
+                language=language,
+                job_id=job.id,
+            )
 
         job.status = "ready"
         job.result_text = json.dumps(result, ensure_ascii=False)[:24_000]
-        job.tokens_used = tokens
+        job.tokens_used = int(result.pop("_tokens_used", 0) or 0)
         job.error = None
         job.updated_at = datetime.now(timezone.utc)
         session.add(job)
         session.commit()
         return result
+    except HTTPException as exc:
+        job.status = "failed"
+        job.error = str(exc.detail)[:800]
+        job.updated_at = datetime.now(timezone.utc)
+        session.add(job)
+        session.commit()
+        raise
+    except TimeoutError as exc:
+        job.status = "failed"
+        job.error = str(exc)[:800]
+        job.updated_at = datetime.now(timezone.utc)
+        session.add(job)
+        session.commit()
+        raise HTTPException(
+            504,
+            "Critical review timed out. Try reviewing one chapter at a time, "
+            "or fewer focus areas.",
+        ) from exc
     except Exception as exc:  # noqa: BLE001
         job.status = "failed"
         job.error = str(exc)[:800]
@@ -191,11 +186,285 @@ def list_critical_review_jobs(
                 "scope": payload.get("scope"),
                 "summary": payload.get("summary"),
                 "finding_count": len(payload.get("findings") or []),
+                "score": payload.get("score"),
             }
         )
         if len(out) >= limit:
             break
     return out
+
+
+def get_latest_critical_review(
+    session: Session,
+    *,
+    user_id: str,
+    book_id: str,
+    chapter_id: str | None = None,
+) -> dict[str, Any] | None:
+    """Return the most recent ready critical-review payload for this book/chapter."""
+    rows = session.exec(
+        select(AiJob)
+        .where(AiJob.book_id == book_id)
+        .where(AiJob.user_id == user_id)
+        .order_by(AiJob.created_at.desc())
+    ).all()
+    for row in rows:
+        if not (row.prompt or "").startswith(JOB_PREFIX):
+            continue
+        if chapter_id and row.chapter_id not in {chapter_id, None}:
+            continue
+        if row.status != "ready" or not row.result_text:
+            continue
+        try:
+            payload = json.loads(row.result_text)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        findings = payload.get("findings") or []
+        if not isinstance(findings, list):
+            findings = []
+        if "score" not in payload or "counts_by_category" not in payload:
+            score, counts = _score_and_counts(findings)
+            payload["score"] = score
+            payload["counts_by_category"] = counts
+        payload["job_id"] = row.id
+        payload["findings"] = findings
+        return payload
+    return None
+
+
+def _review_single_scope(
+    session: Session,
+    *,
+    user: User,
+    book: Book,
+    chapter_id: str | None,
+    scope: str,
+    cats: list[str],
+    selection: str,
+    language: str,
+    job_id: str,
+) -> dict[str, Any]:
+    chapters, manuscript, chapter_map = _build_manuscript(
+        session, book, chapter_id, scope, selection
+    )
+    if not manuscript.strip():
+        raise HTTPException(400, "No manuscript text to review.")
+
+    char_count = len(manuscript)
+    token_estimate = max(2500, char_count // 3)
+    assert_quota(session, user, estimate=token_estimate)
+
+    if not settings.llm_live_enabled:
+        parsed = _offline_findings(manuscript, cats, chapter_map, language)
+        tokens = max(500, char_count // 8)
+    else:
+        text, tokens = _chat_completion(
+            model=model_for_plan(user.plan),
+            system=_system_prompt(language, cats, full_book=False),
+            user_prompt=_user_prompt(book, scope, manuscript, char_count),
+            temperature=0.2,
+            timeout=min(SINGLE_LLM_TIMEOUT, settings.llm_timeout_seconds),
+            max_tokens=REVIEW_MAX_TOKENS,
+        )
+        parsed = _parse_review_json(text)
+
+    findings = _normalize_findings(parsed.get("findings") or [], chapter_map)
+    summary = str(parsed.get("summary") or "").strip() or _default_summary(
+        findings, language
+    )
+    score, counts_by_category = _score_and_counts(findings)
+    return {
+        "job_id": job_id,
+        "scope": scope,
+        "categories": cats,
+        "summary": summary,
+        "score": score,
+        "counts_by_category": counts_by_category,
+        "findings": findings,
+        "chapter_count": len(chapters),
+        "char_count": char_count,
+        "chapters_reviewed": len(chapters) or (1 if manuscript else 0),
+        "partial": False,
+        "_tokens_used": tokens,
+    }
+
+
+def _review_book_chunked(
+    session: Session,
+    *,
+    user: User,
+    book: Book,
+    cats: list[str],
+    language: str,
+    job_id: str,
+) -> dict[str, Any]:
+    rows = list(
+        session.exec(
+            select(Chapter)
+            .where(Chapter.book_id == book.id)
+            .order_by(Chapter.position)
+        ).all()
+    )
+    locale = normalize_locale(book.locale)
+    chapters_with_text: list[tuple[Chapter, str, dict[str, str]]] = []
+    for row in rows:
+        body = (row.content_text or "").strip()
+        if not body:
+            continue
+        label = row.full_label or format_chapter_label(
+            row.kind, row.number, row.title, locale
+        )
+        meta = {"id": row.id, "label": label}
+        chapters_with_text.append((row, body[:MAX_CHAPTER_CHARS], meta))
+
+    if not chapters_with_text:
+        raise HTTPException(400, "No manuscript text to review.")
+
+    selected = chapters_with_text[:MAX_BOOK_CHAPTERS]
+    total_chars = sum(len(body) for _, body, _ in selected)
+    assert_quota(session, user, estimate=max(2500, total_chars // 3))
+
+    model = model_for_plan(user.plan)
+    system = _system_prompt(language, cats, full_book=True)
+    all_findings: list[dict[str, Any]] = []
+    chapter_summaries: list[str] = []
+    tokens_total = 0
+    reviewed = 0
+    timed_out = 0
+    failed = 0
+    started = time.monotonic()
+    chapter_timeout = min(CHAPTER_LLM_TIMEOUT, settings.llm_timeout_seconds)
+
+    for row, body, meta in selected:
+        elapsed = time.monotonic() - started
+        if elapsed >= BOOK_WALL_CLOCK_SECONDS:
+            break
+        remaining = BOOK_WALL_CLOCK_SECONDS - elapsed
+        call_timeout = max(15.0, min(chapter_timeout, remaining))
+
+        chapter_map = {meta["id"]: meta}
+        manuscript = f"=== [CHAPTER_ID:{meta['id']}] {meta['label']} ===\n{body}"
+        user_prompt = _user_prompt(
+            book, "chapter", manuscript, len(manuscript), chapter_label=meta["label"]
+        )
+
+        try:
+            text, tokens = _chat_completion(
+                model=model,
+                system=system,
+                user_prompt=user_prompt,
+                temperature=0.2,
+                timeout=call_timeout,
+                max_tokens=REVIEW_MAX_TOKENS,
+            )
+            parsed = _parse_review_json(text)
+            tokens_total += tokens
+            reviewed += 1
+            chunk_findings = _normalize_findings(
+                parsed.get("findings") or [], chapter_map
+            )
+            for finding in chunk_findings:
+                if not finding.get("chapter_id"):
+                    finding["chapter_id"] = meta["id"]
+                    finding["chapter_label"] = meta["label"]
+            all_findings.extend(chunk_findings)
+            summary_bit = str(parsed.get("summary") or "").strip()
+            if summary_bit:
+                chapter_summaries.append(f"{meta['label']}: {summary_bit}")
+        except TimeoutError:
+            timed_out += 1
+            continue
+        except Exception:  # noqa: BLE001
+            failed += 1
+            continue
+
+    if reviewed == 0 and (timed_out > 0 or failed > 0):
+        raise TimeoutError(
+            f"All chapter reviews failed or timed out "
+            f"(timed_out={timed_out}, failed={failed})."
+        )
+
+    findings = _rank_and_cap_findings(all_findings, FINDINGS_CAP)
+    partial = (
+        timed_out > 0
+        or failed > 0
+        or len(selected) < len(chapters_with_text)
+        or reviewed < len(selected)
+    )
+    summary = _book_summary(
+        findings,
+        language,
+        reviewed=reviewed,
+        total_available=len(chapters_with_text),
+        timed_out=timed_out,
+        truncated=len(selected) < len(chapters_with_text),
+        chapter_summaries=chapter_summaries,
+    )
+    score, counts_by_category = _score_and_counts(findings)
+
+    return {
+        "job_id": job_id,
+        "scope": "book",
+        "categories": cats,
+        "summary": summary,
+        "score": score,
+        "counts_by_category": counts_by_category,
+        "findings": findings,
+        "chapter_count": len(rows),
+        "char_count": total_chars,
+        "chapters_reviewed": reviewed,
+        "partial": partial,
+        "_tokens_used": tokens_total,
+    }
+
+
+def _system_prompt(language: str, cats: list[str], *, full_book: bool) -> str:
+    cat_lines = "\n".join(f"- {key}: {CATEGORIES[key]}" for key in cats)
+    limit = 6 if full_book else FINDINGS_CAP
+    return (
+        f"You are a senior literary editor reviewing a manuscript in {language}. "
+        "Perform a professional critical review focused on the requested categories. "
+        "Return ONLY valid JSON (no markdown fences) with this shape:\n"
+        '{"summary":"2-4 sentence overall assessment","findings":[{'
+        '"id":"f1","category":"spelling","severity":"minor|moderate|major",'
+        '"chapter_id":"uuid or null","chapter_label":"Chapter 1",'
+        '"quote":"exact excerpt copied verbatim from the manuscript (15-120 chars)",'
+        '"message":"clear explanation for the author or editor",'
+        '"suggested_fix":"replacement text when applicable, else empty string"'
+        "}]}\n"
+        f"Review categories to apply:\n{cat_lines}\n"
+        "Rules:\n"
+        "- quote MUST appear exactly in the manuscript (copy verbatim).\n"
+        "- Prefer actionable, specific findings over vague praise.\n"
+        f"- Limit to the {limit} most important findings.\n"
+        "- Use chapter_id from [CHAPTER_ID:...] markers when present.\n"
+        "- severity: minor = polish; moderate = should fix; major = blocks quality.\n"
+        "- For spelling/grammar with a clear fix, always provide suggested_fix.\n"
+        "- Do not invent plot details not present in the text.\n"
+        "- Write message and summary in the manuscript language.\n"
+        "- Keep the response concise so it finishes quickly."
+    )
+
+
+def _user_prompt(
+    book: Book,
+    scope: str,
+    manuscript: str,
+    char_count: int,
+    *,
+    chapter_label: str | None = None,
+) -> str:
+    parts = [
+        f"Book title: {book.title or '(untitled)'}",
+        f"Author: {book.author or '(unknown)'}",
+        f"Scope: {scope}",
+    ]
+    if chapter_label:
+        parts.append(f"Chapter: {chapter_label}")
+    parts.append(f"Manuscript ({char_count} chars):\n\n{manuscript}")
+    return "\n".join(parts)
 
 
 def _build_manuscript(
@@ -256,7 +525,7 @@ def _build_manuscript(
     return rows, "\n\n".join(parts), chapter_map
 
 
-def _parse_review_json(text: str, chapter_map: dict[str, dict[str, str]]) -> dict[str, Any]:
+def _parse_review_json(text: str) -> dict[str, Any]:
     cleaned = text.strip()
     if cleaned.startswith("```"):
         cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
@@ -324,9 +593,32 @@ def _normalize_findings(
                 "suggested_fix": str(raw.get("suggested_fix") or "").strip()[:2000],
             }
         )
-        if len(out) >= 12:
+        if len(out) >= FINDINGS_CAP:
             break
     return out
+
+
+def _rank_and_cap_findings(
+    findings: list[dict[str, Any]], limit: int
+) -> list[dict[str, Any]]:
+    seen: set[str] = set()
+    unique: list[dict[str, Any]] = []
+    for finding in findings:
+        key = f"{finding.get('category')}:{str(finding.get('quote') or '')[:80]}"
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(finding)
+    unique.sort(
+        key=lambda f: (
+            _SEVERITY_RANK.get(str(f.get("severity")), 9),
+            str(f.get("chapter_label") or ""),
+        )
+    )
+    capped = unique[:limit]
+    for index, finding in enumerate(capped):
+        finding["id"] = f"f{index + 1}"
+    return capped
 
 
 def _default_summary(findings: list[dict[str, Any]], language: str) -> str:
@@ -353,6 +645,49 @@ def _default_summary(findings: list[dict[str, Any]], language: str) -> str:
     )
 
 
+def _book_summary(
+    findings: list[dict[str, Any]],
+    language: str,
+    *,
+    reviewed: int,
+    total_available: int,
+    timed_out: int,
+    truncated: bool,
+    chapter_summaries: list[str],
+) -> str:
+    base = _default_summary(findings, language)
+    notes: list[str] = []
+    if language.startswith("Portuguese"):
+        notes.append(f"Capítulos analisados: {reviewed}/{total_available}.")
+        if truncated:
+            notes.append(
+                f"Limitado aos primeiros {MAX_BOOK_CHAPTERS} capítulos com texto."
+            )
+        if timed_out:
+            notes.append(f"{timed_out} capítulo(s) excederam o tempo limite.")
+    elif language == "Spanish":
+        notes.append(f"Capítulos analizados: {reviewed}/{total_available}.")
+        if truncated:
+            notes.append(
+                f"Limitado a los primeros {MAX_BOOK_CHAPTERS} capítulos con texto."
+            )
+        if timed_out:
+            notes.append(f"{timed_out} capítulo(s) superaron el tiempo límite.")
+    else:
+        notes.append(f"Chapters reviewed: {reviewed}/{total_available}.")
+        if truncated:
+            notes.append(
+                f"Limited to the first {MAX_BOOK_CHAPTERS} chapters with text."
+            )
+        if timed_out:
+            notes.append(f"{timed_out} chapter(s) timed out.")
+
+    extra = " ".join(notes)
+    if chapter_summaries:
+        return f"{base} {extra}"
+    return f"{base} {extra}".strip()
+
+
 def _offline_findings(
     manuscript: str,
     categories: list[str],
@@ -364,7 +699,9 @@ def _offline_findings(
     default_chapter = next(iter(chapter_map.values()), None)
 
     if "spelling" in categories:
-        for match in re.finditer(r"\b(teh|recieve|occured|seperate|definately)\b", manuscript, re.I):
+        for match in re.finditer(
+            r"\b(teh|recieve|occured|seperate|definately)\b", manuscript, re.I
+        ):
             word = match.group(1)
             findings.append(
                 _finding(
@@ -402,7 +739,10 @@ def _offline_findings(
                     category="cohesion",
                     severity="moderate",
                     quote=quote,
-                    message="Consider adding a transition linking this paragraph to the previous one.",
+                    message=(
+                        "Consider adding a transition linking this paragraph "
+                        "to the previous one."
+                    ),
                     suggested_fix="",
                     chapter=default_chapter,
                 )
@@ -414,7 +754,9 @@ def _offline_findings(
                 category="organization",
                 severity="moderate",
                 quote=manuscript[:80],
-                message="Review whether chapter order and pacing serve the narrative arc.",
+                message=(
+                    "Review whether chapter order and pacing serve the narrative arc."
+                ),
                 suggested_fix="",
                 chapter=default_chapter,
             )
@@ -429,8 +771,12 @@ def _offline_findings(
                 _finding(
                     category="style",
                     severity="minor",
-                    quote=_quote_window(manuscript, match.start(), min(match.end() + 40, len(manuscript))),
-                    message=f"Repeated word “{word}” nearby — consider varying vocabulary.",
+                    quote=_quote_window(
+                        manuscript, match.start(), min(match.end() + 40, len(manuscript))
+                    ),
+                    message=(
+                        f"Repeated word “{word}” nearby — consider varying vocabulary."
+                    ),
                     suggested_fix="",
                     chapter=default_chapter,
                 )

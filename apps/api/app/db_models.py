@@ -65,6 +65,7 @@ class Chapter(SQLModel, table=True):
 
     id: str = Field(default_factory=_uuid, primary_key=True)
     book_id: str = Field(index=True, foreign_key="books.id")
+    parent_id: Optional[str] = Field(default=None, index=True, foreign_key="chapters.id")
     position: int = Field(default=0, index=True)
     kind: str = Field(default="chapter")
     number: Optional[int] = None

@@ -9,6 +9,8 @@ from sqlmodel import Session, select
 from app.config import get_settings
 from app.db_models import AiJob, Book, User
 from app.i18n_labels import normalize_locale
+from app.services.book_style import style_profile_from_book
+from app.services.chapter_context import prior_chapters_context
 
 settings = get_settings()
 
@@ -81,7 +83,9 @@ def run_chapter_ai(
     locale = normalize_locale(book.locale)
     language = LOCALE_NAMES.get(locale, "English")
     system, user_prompt = _prompts_for_action(
+        session=session,
         book=book,
+        chapter_id=chapter_id,
         action=action,
         prompt=prompt,
         selection=selection,
@@ -150,7 +154,9 @@ def iter_chapter_ai_stream(
     locale = normalize_locale(book.locale)
     language = LOCALE_NAMES.get(locale, "English")
     system, user_prompt = _prompts_for_action(
+        session=session,
         book=book,
+        chapter_id=chapter_id,
         action=action,
         prompt=prompt,
         selection=selection,
@@ -227,18 +233,35 @@ def iter_chapter_ai_stream(
 
 def _prompts_for_action(
     *,
+    session: Session,
     book: Book,
+    chapter_id: str | None,
     action: str,
     prompt: str,
     selection: str,
     language: str,
 ) -> tuple[str, str]:
-    system = (
-        f"You are a warm, practical literary coach helping beginners write books. "
-        f"Always write in {language}. Keep prose clear, vivid, and publishable. "
-        f"Unless asked for notes or an outline list, return only the story text "
-        f"ready to paste into a chapter—no markdown fences, no meta commentary."
+    profile = style_profile_from_book(book)
+    style_block = profile.to_prompt_block(language)
+    prior_block = prior_chapters_context(
+        session,
+        book_id=book.id,
+        chapter_id=chapter_id,
+        profile=profile,
     )
+    system_parts = [
+        "You are a warm, practical literary coach helping authors write books.",
+        f"Always write in {language}. Keep prose clear, vivid, and publishable.",
+        "Unless asked for notes or an outline list, return only the story text "
+        "ready to paste into a chapter—no markdown fences, no meta commentary.",
+    ]
+    if style_block:
+        system_parts.append(style_block)
+        system_parts.append(
+            "Honor the book voice profile in every response. "
+            "Do not break POV, tone, or genre conventions unless the author explicitly asks."
+        )
+    system = "\n".join(system_parts)
     user_prompt = _build_user_prompt(
         action,
         prompt,
@@ -246,6 +269,7 @@ def _prompts_for_action(
         language,
         book_title=book.title,
         book_author=book.author,
+        prior_context=prior_block,
     )
     return system, user_prompt
 
@@ -256,6 +280,8 @@ def _chat_completion(
     system: str,
     user_prompt: str,
     temperature: float,
+    timeout: float | None = None,
+    max_tokens: int | None = None,
 ) -> tuple[str, int]:
     url = f"{settings.resolved_llm_base_url}/chat/completions"
     api_key = settings.resolved_llm_api_key
@@ -276,15 +302,29 @@ def _chat_completion(
         ],
         "temperature": temperature,
     }
+    if max_tokens is not None:
+        body["max_tokens"] = max_tokens
 
-    with httpx.Client(timeout=settings.llm_timeout_seconds) as client:
-        response = client.post(url, headers=headers, json=body)
-        if response.status_code >= 400:
-            detail = response.text[:800]
-            raise RuntimeError(
-                f"LLM HTTP {response.status_code} at {url}: {detail}"
-            )
-        payload = response.json()
+    read_timeout = float(timeout if timeout is not None else settings.llm_timeout_seconds)
+    http_timeout = httpx.Timeout(
+        connect=10.0,
+        read=read_timeout,
+        write=30.0,
+        pool=10.0,
+    )
+    try:
+        with httpx.Client(timeout=http_timeout) as client:
+            response = client.post(url, headers=headers, json=body)
+            if response.status_code >= 400:
+                detail = response.text[:800]
+                raise RuntimeError(
+                    f"LLM HTTP {response.status_code} at {url}: {detail}"
+                )
+            payload = response.json()
+    except httpx.TimeoutException as exc:
+        raise TimeoutError(
+            f"LLM request timed out after {read_timeout:.0f}s"
+        ) from exc
 
     choices = payload.get("choices") or []
     if not choices:
@@ -368,11 +408,13 @@ def _build_user_prompt(
     *,
     book_title: str = "",
     book_author: str = "",
+    prior_context: str = "",
 ) -> str:
     book_line = f'Book title: "{book_title}". Author: "{book_author or "unknown"}".'
+    context_block = f"\n\n{prior_context}" if prior_context else ""
     if action == "start":
         return (
-            f"{book_line}\n"
+            f"{book_line}{context_block}\n"
             f"A beginner wants to start their first chapter in {language}.\n"
             f"Idea / synopsis:\n{prompt}\n\n"
             "Write Chapter 1 as readable prose (800–1200 words if possible), "
@@ -380,47 +422,61 @@ def _build_user_prompt(
         )
     if action == "outline":
         return (
-            f"{book_line}\n"
+            f"{book_line}{context_block}\n"
             f"Create a simple chapter outline in {language} for this book idea:\n{prompt}\n\n"
             "Return 6–10 numbered chapter titles with one short sentence each. "
             "Keep it friendly for a first-time author."
         )
     if action == "generate":
         return (
-            f"{book_line}\n"
+            f"{book_line}{context_block}\n"
             f"Write a new chapter section in {language}.\nBrief from the author:\n{prompt}"
         )
     if action == "continue":
         return (
-            f"{book_line}\n"
-            f"Continue this manuscript naturally in {language}.\n\n"
+            f"{book_line}{context_block}\n"
+            f"Continue this manuscript naturally in {language}, matching established voice.\n\n"
             f"Context:\n{selection or prompt}\n\n"
             "Write the next 2–4 paragraphs only."
         )
     if action == "rewrite":
         return (
+            f"{book_line}{context_block}\n"
             f"Rewrite the selection in {language}, improving clarity and rhythm "
             f"without changing plot.\n\nSelection:\n{selection}\n\nNotes: {prompt}"
         )
     if action == "tone":
         return (
-            f"Adjust the tone of the selection in {language}. Desired tone: {prompt or 'warmer and clearer'}\n\n"
+            f"{book_line}{context_block}\n"
+            f"Adjust the tone of the selection in {language}. "
+            f"Desired tone: {prompt or 'warmer and clearer'}\n\n"
             f"Selection:\n{selection}"
         )
     if action == "dialogue":
         return (
+            f"{book_line}{context_block}\n"
             f"Improve or add natural dialogue in {language} for this passage.\n\n"
             f"Passage:\n{selection or prompt}\n\n"
             "Return the revised passage only."
         )
     if action == "simplify":
         return (
+            f"{book_line}{context_block}\n"
             f"Rewrite this passage in simpler, clearer {language} for a general reader.\n\n"
             f"Passage:\n{selection or prompt}"
         )
+    if action == "consistent":
+        return (
+            f"{book_line}{context_block}\n"
+            f"Revise the selection in {language} so it matches the book's established "
+            "voice, POV, tone, and continuity with earlier chapters.\n"
+            "Preserve plot facts and character names. Improve only diction, rhythm, and consistency.\n\n"
+            f"Selection:\n{selection or prompt}\n\n"
+            f"Author notes (optional): {prompt or '(none)'}"
+        )
     if action == "finalize":
         return (
-            f"{book_line}\n"
+            f"{book_line}{context_block}\n"
             f"Read the chapter text below carefully in {language}. "
             "Write a satisfying chapter ending (desfecho) that resolves the emotional beat "
             "of this chapter, closes the scene, and leaves a soft hook for what may come next—"
@@ -473,6 +529,11 @@ def _offline_result(
                 "O silêncio que veio depois não era vazio: era expectativa. "
                 "Cada detalhe do ambiente ganhava peso, como se a história "
                 "tivesse finalmente encontrado o ritmo certo."
+            )
+        if action == "consistent":
+            return (
+                f"{(selection or idea).strip()}\n\n"
+                "(Versão alinhada ao perfil do livro — modo local.)"
             )
         if action == "finalize":
             return (

@@ -1,5 +1,6 @@
 "use client";
 
+import { BookStylePanel } from "@/components/BookStylePanel";
 import { ChapterEditor } from "@/components/ChapterEditor";
 import { ChapterSidebar } from "@/components/ChapterSidebar";
 import { ExportActions, type ExportFormat } from "@/components/ExportActions";
@@ -212,20 +213,21 @@ export function BookWorkspace({ bookId, locale, tab }: Props) {
     }
   }
 
-  async function addBlankChapter() {
+  async function addBlankChapter(parentId: string | null = null) {
     setBusy(true);
     const loadingId = toast.loading(s("notifyChapterCreating"));
     try {
       const token = await getToken();
+      const chapterCount = chapters.filter((c) => c.kind === "chapter").length;
       const chapter = await clientApiFetch<Chapter>(
         `/api/v1/books/${bookId}/chapters`,
         token,
         {
           method: "POST",
           body: JSON.stringify({
-            title: `${s("chapter")} ${chapters.length + 1}`,
+            title: `${s("chapter")} ${chapterCount + 1}`,
             kind: "chapter",
-            number: chapters.length + 1,
+            parent_id: parentId,
             content_text: "",
           }),
         },
@@ -241,6 +243,42 @@ export function BookWorkspace({ bookId, locale, tab }: Props) {
       toast.update(loadingId, {
         tone: "error",
         title: s("notifyChapterFailed"),
+        description: err instanceof Error ? err.message : undefined,
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function addBlankPart() {
+    setBusy(true);
+    const loadingId = toast.loading(s("notifyPartCreating"));
+    try {
+      const token = await getToken();
+      const partCount = chapters.filter((c) => c.kind === "part").length;
+      const chapter = await clientApiFetch<Chapter>(
+        `/api/v1/books/${bookId}/chapters`,
+        token,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            title: `${s("part")} ${partCount + 1}`,
+            kind: "part",
+            content_text: "",
+          }),
+        },
+      );
+      await load();
+      setActiveChapterId(chapter.id);
+      goView("write");
+      toast.update(loadingId, {
+        tone: "success",
+        title: s("notifyPartCreated"),
+      });
+    } catch (err) {
+      toast.update(loadingId, {
+        tone: "error",
+        title: s("notifyPartFailed"),
         description: err instanceof Error ? err.message : undefined,
       });
     } finally {
@@ -515,7 +553,8 @@ export function BookWorkspace({ bookId, locale, tab }: Props) {
             busy={busy}
             readOnly={!canEdit}
             onSelect={(id) => setActiveChapterId(id)}
-            onAdd={() => void addBlankChapter()}
+            onAddChapter={(parentId) => void addBlankChapter(parentId ?? null)}
+            onAddPart={() => void addBlankPart()}
             onRename={renameChapter}
             onDelete={deleteChapter}
             onDeleteAll={deleteAllChapters}
@@ -551,6 +590,7 @@ export function BookWorkspace({ bookId, locale, tab }: Props) {
             ) : activeChapter ? (
               <ChapterEditor
                 bookId={bookId}
+                book={book}
                 chapter={activeChapter}
                 chapters={chapters}
                 canUseAi={canUseAi}
@@ -621,29 +661,38 @@ export function BookWorkspace({ bookId, locale, tab }: Props) {
       ) : null}
 
       {view === "settings" && book ? (
-        <div className="studio-isolated panel">
-          <form className="form-grid" onSubmit={saveSettings}>
-            <h2>{t("settings")}</h2>
-            <label>
-              {t("title")}
-              <input name="title" defaultValue={book.title} />
-            </label>
-            <label>
-              {t("author")}
-              <input name="author" defaultValue={book.author} />
-            </label>
-            <label>
-              {t("locale")}
-              <select name="locale" defaultValue={book.locale}>
-                <option value="en">English</option>
-                <option value="pt-BR">Português (Brasil)</option>
-                <option value="es">Español</option>
-              </select>
-            </label>
-            <button type="submit" className="btn btn-primary" disabled={busy}>
-              {common("save")}
-            </button>
-          </form>
+        <div className="studio-settings-layout">
+          <div className="studio-isolated panel">
+            <form className="form-grid" onSubmit={saveSettings}>
+              <h2>{t("settings")}</h2>
+              <label>
+                {t("title")}
+                <input name="title" defaultValue={book.title} />
+              </label>
+              <label>
+                {t("author")}
+                <input name="author" defaultValue={book.author} />
+              </label>
+              <label>
+                {t("locale")}
+                <select name="locale" defaultValue={book.locale}>
+                  <option value="en">English</option>
+                  <option value="pt-BR">Português (Brasil)</option>
+                  <option value="es">Español</option>
+                </select>
+              </label>
+              <button type="submit" className="btn btn-primary" disabled={busy}>
+                {common("save")}
+              </button>
+            </form>
+          </div>
+          <div className="studio-isolated panel">
+            <BookStylePanel
+              book={book}
+              canEdit={canEdit}
+              onSaved={(updated) => setBook(updated)}
+            />
+          </div>
         </div>
       ) : null}
 

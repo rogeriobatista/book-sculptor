@@ -17,11 +17,17 @@ import {
   type ChapterCommentItem,
 } from "@/components/ChapterReviewPanel";
 import { EditorAiPanel } from "@/components/EditorAiPanel";
-import { CriticalReviewPanel } from "@/components/CriticalReviewPanel";
+import {
+  CriticalReviewPanel,
+  type CriticalFinding,
+  type CriticalReviewResult,
+  type CritiqueFilterKey,
+} from "@/components/CriticalReviewPanel";
 import { EditorToolsPanel, type EditorToolsTab } from "@/components/EditorToolsPanel";
 import { RichTextToolbar } from "@/components/RichTextToolbar";
+import { TrackChangeBubble } from "@/components/TrackChangeBubble";
 import { useToast } from "@/components/ToastProvider";
-import { type Chapter, clientApiFetch } from "@/lib/client-api";
+import { type Book, type Chapter, clientApiFetch } from "@/lib/client-api";
 import {
   CHAPTER_KINDS,
   countWords,
@@ -31,11 +37,20 @@ import {
   type ChapterSection,
 } from "@/lib/chapter-structure";
 import { streamAiChapter } from "@/lib/ai-stream";
+import { bookStyleFromBook, isBookStyleConfigured } from "@/lib/book-style";
+import {
+  applyCritiqueHighlights,
+  CritiqueHighlight,
+  readingFindingIdFromEvent,
+  stripEditorOverlayMarksFromJson,
+} from "@/lib/critique-highlight";
 import {
   applyReviewHighlights,
+  findQuoteRange,
+  isOpenTrackChangeMark,
   jumpToQuote,
+  readingCommentIdFromEvent,
   ReviewHighlight,
-  stripReviewMarksFromJson,
 } from "@/lib/review-highlight";
 import { useAppAuth } from "@/lib/use-app-auth";
 
@@ -46,7 +61,8 @@ type AiAction =
   | "tone"
   | "dialogue"
   | "simplify"
-  | "finalize";
+  | "finalize"
+  | "consistent";
 
 type ChatItem = {
   id: string;
@@ -57,6 +73,7 @@ type ChatItem = {
 
 type Props = {
   bookId: string;
+  book: Book;
   chapter: Chapter;
   chapters: Chapter[];
   canUseAi: boolean;
@@ -99,6 +116,7 @@ function jumpToSection(
 
 export function ChapterEditor({
   bookId,
+  book,
   chapter,
   chapters,
   canUseAi,
@@ -123,6 +141,16 @@ export function ChapterEditor({
   const [toolsTab, setToolsTab] = useState<EditorToolsTab>("ai");
   const [openReviewCount, setOpenReviewCount] = useState(0);
   const [reviewComments, setReviewComments] = useState<ChapterCommentItem[]>([]);
+  const [critiqueFindings, setCritiqueFindings] = useState<CriticalFinding[]>([]);
+  const [activeCritiqueId, setActiveCritiqueId] = useState<string | null>(null);
+  const [critiqueResult, setCritiqueResult] = useState<CriticalReviewResult | null>(null);
+  const [critiqueDismissed, setCritiqueDismissed] = useState<Set<string>>(() => new Set());
+  const [critiqueFilter, setCritiqueFilter] = useState<CritiqueFilterKey>("all");
+  const [activeTrackChangeId, setActiveTrackChangeId] = useState<string | null>(null);
+  const [trackBubbleAnchor, setTrackBubbleAnchor] = useState<{ top: number; left: number } | null>(
+    null,
+  );
+  const [trackBusy, setTrackBusy] = useState(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const skipNextSync = useRef(false);
   const loadedChapterId = useRef<string | null>(null);
@@ -133,12 +161,18 @@ export function ChapterEditor({
 
   const chips: { action: AiAction; label: string; prompt?: string }[] = [
     { action: "continue", label: t("chipContinue") },
+    { action: "consistent", label: t("chipConsistent") },
     { action: "dialogue", label: t("chipDialogue") },
     { action: "simplify", label: t("chipSimplify") },
     { action: "tone", label: t("chipWarm"), prompt: t("promptWarm") },
     { action: "rewrite", label: t("chipRewrite") },
     { action: "finalize", label: t("chipFinalize") },
   ];
+
+  const styleConfigured = useMemo(
+    () => isBookStyleConfigured(bookStyleFromBook(book)),
+    [book],
+  );
 
   const initialDoc = useMemo(() => docFromChapterContent(chapter), [chapter]);
 
@@ -149,6 +183,7 @@ export function ChapterEditor({
       }),
       Underline,
       ReviewHighlight,
+      CritiqueHighlight,
       Highlight.configure({ multicolor: false }),
       Link.configure({ openOnClick: false }),
       TextAlign.configure({ types: ["heading", "paragraph"] }),
@@ -158,6 +193,35 @@ export function ChapterEditor({
     content: initialDoc,
     editable: canEdit,
     immediatelyRender: false,
+    editorProps: {
+      handleClick: (_view, _pos, event) => {
+        if (isOpenTrackChangeMark(event.target)) {
+          const commentId = readingCommentIdFromEvent(event.target);
+          if (commentId) {
+            setActiveTrackChangeId(commentId);
+            setTrackBubbleAnchor({
+              top: event.clientY + 12,
+              left: Math.min(event.clientX, window.innerWidth - 320),
+            });
+            setToolsOpen(true);
+            setToolsTab("review");
+            const el = document.getElementById(`review-item-${commentId}`);
+            el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+            return true;
+          }
+        }
+        const findingId = readingFindingIdFromEvent(event.target);
+        if (!findingId) return false;
+        setActiveTrackChangeId(null);
+        setTrackBubbleAnchor(null);
+        setToolsOpen(true);
+        setToolsTab("critique");
+        setActiveCritiqueId(findingId);
+        const el = document.getElementById(`critique-finding-${findingId}`);
+        el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        return true;
+      },
+    },
     onUpdate: ({ editor: current }) => {
       if (!canEdit) return;
       setStatus("idle");
@@ -165,7 +229,7 @@ export function ChapterEditor({
       if (saveTimer.current) clearTimeout(saveTimer.current);
       saveTimer.current = setTimeout(() => {
         void persist(
-          stripReviewMarksFromJson(current.getJSON()) as Record<string, unknown>,
+          stripEditorOverlayMarksFromJson(current.getJSON()) as Record<string, unknown>,
           current.getText(),
         );
       }, 900);
@@ -192,9 +256,52 @@ export function ChapterEditor({
     applyReviewHighlights(editor, reviewComments);
   }, [editor, reviewComments, chapter.id]);
 
+  useEffect(() => {
+    if (!activeTrackChangeId) return;
+    const comment = reviewComments.find((item) => item.id === activeTrackChangeId);
+    if (!comment || comment.status !== "open" || comment.kind !== "suggestion") {
+      setActiveTrackChangeId(null);
+      setTrackBubbleAnchor(null);
+    }
+  }, [activeTrackChangeId, reviewComments]);
+
+  useEffect(() => {
+    if (!editor) return;
+    applyCritiqueHighlights(editor, critiqueFindings, {
+      chapterId: chapter.id,
+      activeFindingId: activeCritiqueId,
+    });
+  }, [editor, critiqueFindings, activeCritiqueId, chapter.id]);
+
   const handleCommentsChange = useCallback((comments: ChapterCommentItem[]) => {
     setReviewComments(comments);
   }, []);
+
+  const handleCritiqueFindingsChange = useCallback((findings: CriticalFinding[]) => {
+    setCritiqueFindings(findings);
+  }, []);
+
+  const handleCritiqueResultChange = useCallback((next: CriticalReviewResult | null) => {
+    setCritiqueResult(next);
+  }, []);
+
+  const handleCritiqueDismissedChange = useCallback((next: Set<string>) => {
+    setCritiqueDismissed(next);
+  }, []);
+
+  const handleCritiqueFilterChange = useCallback((next: CritiqueFilterKey) => {
+    setCritiqueFilter(next);
+  }, []);
+
+  useEffect(() => {
+    setCritiqueResult(null);
+    setCritiqueDismissed(new Set());
+    setCritiqueFilter("all");
+    setCritiqueFindings([]);
+    setActiveCritiqueId(null);
+    setActiveTrackChangeId(null);
+    setTrackBubbleAnchor(null);
+  }, [chapter.id]);
 
   const handleJumpToQuote = useCallback(
     (quote: string) => {
@@ -203,6 +310,59 @@ export function ChapterEditor({
       if (!ok) toast.info(t("reviewPassageNotFound"));
     },
     [editor, t, toast],
+  );
+
+  const handleApplyCritiqueFix = useCallback(
+    async (finding: CriticalFinding): Promise<boolean> => {
+      if (!finding.suggested_fix) return false;
+      const quote = finding.quote?.trim();
+      if (!quote) return false;
+      if (!editor) return false;
+      const range = findQuoteRange(editor.state.doc, quote);
+      if (!range) return false;
+
+      const token = await getToken();
+      await clientApiFetch(
+        `/api/v1/books/${bookId}/chapters/${chapter.id}/comments`,
+        token,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            kind: "suggestion",
+            quote,
+            body: `[${t(`critiqueCat_${finding.category}`)}] ${finding.message}`,
+            proposed_text: finding.suggested_fix.trim(),
+          }),
+        },
+      );
+      setReviewKey((k) => k + 1);
+      setToolsTab("review");
+      return true;
+    },
+    [bookId, chapter.id, editor, getToken, t],
+  );
+
+  const updateTrackChangeStatus = useCallback(
+    async (commentId: string, status: "accepted" | "rejected") => {
+      setTrackBusy(true);
+      try {
+        const token = await getToken();
+        await clientApiFetch(
+          `/api/v1/books/${bookId}/chapters/${chapter.id}/comments/${commentId}`,
+          token,
+          { method: "PATCH", body: JSON.stringify({ status }) },
+        );
+        setActiveTrackChangeId(null);
+        setTrackBubbleAnchor(null);
+        setReviewKey((k) => k + 1);
+        if (status === "accepted") {
+          await reloadChapter();
+        }
+      } finally {
+        setTrackBusy(false);
+      }
+    },
+    [bookId, chapter.id, getToken],
   );
 
   useEffect(() => {
@@ -353,6 +513,11 @@ export function ChapterEditor({
       return;
     }
 
+    if (action === "consistent" && !selection.trim()) {
+      toast.info(t("consistentNeedSelection"));
+      return;
+    }
+
     const prompt = (promptOverride ?? aiPrompt).trim();
     const context =
       action === "finalize"
@@ -377,7 +542,7 @@ export function ChapterEditor({
 
     const replaceSelection =
       Boolean(selection) &&
-      ["rewrite", "tone", "dialogue", "simplify"].includes(action);
+      ["rewrite", "tone", "dialogue", "simplify", "consistent"].includes(action);
 
     if (replaceSelection) {
       editor.chain().focus().deleteSelection().run();
@@ -431,7 +596,7 @@ export function ChapterEditor({
 
       if (saveTimer.current) clearTimeout(saveTimer.current);
       await persist(
-        stripReviewMarksFromJson(editor.getJSON()) as Record<string, unknown>,
+        stripEditorOverlayMarksFromJson(editor.getJSON()) as Record<string, unknown>,
         editor.getText(),
       );
       toast.success(action === "finalize" ? t("aiFinalized") : t("aiDone"));
@@ -461,6 +626,11 @@ export function ChapterEditor({
         : status === "error"
           ? t("saveFailed")
           : "";
+
+  const activeTrackChange = useMemo(
+    () => reviewComments.find((item) => item.id === activeTrackChangeId) ?? null,
+    [activeTrackChangeId, reviewComments],
+  );
 
   return (
     <div
@@ -575,6 +745,7 @@ export function ChapterEditor({
                 aiBusy={aiBusy}
                 canUseAi={canUseAi}
                 canEdit={canEdit}
+                styleConfigured={styleConfigured}
                 chatEndRef={chatEndRef}
                 onPromptChange={setAiPrompt}
                 onRun={(action, prompt) => void runAi(action, prompt)}
@@ -588,7 +759,17 @@ export function ChapterEditor({
                 canUseAi={canUseAi}
                 canEdit={canEdit}
                 selectionQuote={selectionQuote}
+                result={critiqueResult}
+                dismissed={critiqueDismissed}
+                filter={critiqueFilter}
+                activeFindingId={activeCritiqueId}
+                onResultChange={handleCritiqueResultChange}
+                onDismissedChange={handleCritiqueDismissedChange}
+                onFilterChange={handleCritiqueFilterChange}
                 onJumpToQuote={handleJumpToQuote}
+                onFindingsChange={handleCritiqueFindingsChange}
+                onActiveFindingChange={setActiveCritiqueId}
+                onApplyFix={handleApplyCritiqueFix}
                 onPromoted={() => {
                   setReviewKey((k) => k + 1);
                   setToolsTab("review");
@@ -608,6 +789,8 @@ export function ChapterEditor({
                 onMeta={({ openCount }) => setOpenReviewCount(openCount)}
                 onCommentsChange={handleCommentsChange}
                 onJumpToQuote={handleJumpToQuote}
+                activeCommentId={activeTrackChangeId}
+                currentChapterText={editor?.getText() || chapter.content_text || ""}
               />
             }
             structureSlot={
@@ -622,6 +805,21 @@ export function ChapterEditor({
           />
         ) : null}
       </div>
+
+      {activeTrackChange && trackBubbleAnchor ? (
+        <TrackChangeBubble
+          comment={activeTrackChange}
+          anchor={trackBubbleAnchor}
+          canEdit={canEdit}
+          busy={trackBusy}
+          onAccept={(commentId) => void updateTrackChangeStatus(commentId, "accepted")}
+          onReject={(commentId) => void updateTrackChangeStatus(commentId, "rejected")}
+          onClose={() => {
+            setActiveTrackChangeId(null);
+            setTrackBubbleAnchor(null);
+          }}
+        />
+      ) : null}
     </div>
   );
 }

@@ -10,7 +10,8 @@ type AiAction =
   | "tone"
   | "dialogue"
   | "simplify"
-  | "finalize";
+  | "finalize"
+  | "consistent";
 
 type ChatItem = {
   id: string;
@@ -28,6 +29,7 @@ type Props = {
   aiBusy: boolean;
   canUseAi: boolean;
   canEdit: boolean;
+  styleConfigured?: boolean;
   chatEndRef: RefObject<HTMLDivElement | null>;
   onPromptChange: (value: string) => void;
   onRun: (action: AiAction, prompt?: string) => void;
@@ -41,6 +43,7 @@ export function EditorAiPanel({
   aiBusy,
   canUseAi,
   canEdit,
+  styleConfigured = false,
   chatEndRef,
   onPromptChange,
   onRun,
@@ -71,7 +74,9 @@ export function EditorAiPanel({
       {!canUseAi ? (
         <p className="editor-tools-notice">{t("upgradeAi")}</p>
       ) : (
-        <p className="muted editor-tools-tip">{t("aiLead")}</p>
+        <p className="muted editor-tools-tip">
+          {styleConfigured ? t("bookStyleActiveHint") : t("aiLead")}
+        </p>
       )}
 
       <div className="ai-chat-log" aria-live="polite">

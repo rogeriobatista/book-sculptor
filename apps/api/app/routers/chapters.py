@@ -14,6 +14,13 @@ from app.i18n_labels import CHAPTER_KINDS, format_chapter_label, normalize_local
 from app.schemas import ChapterCreate, ChapterOut, ChapterUpdate, ReorderBody
 from app.services.book_builder import content_json_from_text
 from app.services.chapter_activity import log_chapter_activity
+from app.services.chapter_hierarchy import (
+    next_chapter_number,
+    next_part_number,
+    orphan_children,
+    renumber_book_chapters,
+    validate_parent_id,
+)
 
 router = APIRouter(tags=["chapters"])
 
@@ -22,6 +29,7 @@ def _out(row: Chapter) -> ChapterOut:
     return ChapterOut(
         id=row.id,
         book_id=row.book_id,
+        parent_id=row.parent_id,
         position=row.position,
         kind=row.kind,
         number=row.number,
@@ -37,23 +45,6 @@ def _normalize_kind(kind: str | None) -> str:
     if value not in CHAPTER_KINDS:
         raise HTTPException(400, f"Invalid section kind: {kind}")
     return value
-
-
-def _renumber_chapters(session: Session, book_id: str, locale: str) -> None:
-    rows = session.exec(
-        select(Chapter).where(Chapter.book_id == book_id).order_by(Chapter.position)
-    ).all()
-    n = 1
-    for row in rows:
-        if row.kind == "chapter":
-            row.number = n
-            row.full_label = format_chapter_label(row.kind, row.number, row.title, locale)
-            n += 1
-            session.add(row)
-        elif row.kind != "part" and row.number is not None:
-            row.number = None
-            row.full_label = format_chapter_label(row.kind, None, row.title, locale)
-            session.add(row)
 
 
 @router.get("/books/{book_id}/chapters", response_model=list[ChapterOut])
@@ -82,20 +73,24 @@ def create_chapter(
     locale = normalize_locale(book.locale)
     text = body.content_text or ""
     kind = _normalize_kind(body.kind)
+    parent_id = validate_parent_id(
+        session,
+        book_id=book_id,
+        parent_id=body.parent_id,
+        chapter_kind=kind,
+    )
     number = body.number
     if kind == "chapter":
         if number is None:
-            number = (
-                max(
-                    (c.number or 0 for c in existing if c.kind == "chapter"),
-                    default=0,
-                )
-                + 1
-            )
+            number = next_chapter_number(session, book_id)
+    elif kind == "part":
+        if number is None:
+            number = next_part_number(session, book_id)
     else:
-        number = None if kind != "part" else body.number
+        number = None
     row = Chapter(
         book_id=book_id,
+        parent_id=parent_id,
         position=len(existing),
         kind=kind,
         number=number,
@@ -135,6 +130,18 @@ def update_chapter(
         row.kind = new_kind
         if new_kind != "chapter" and new_kind != "part":
             row.number = None
+        if new_kind == "part":
+            row.parent_id = None
+            orphan_children(session, row.id)
+    if "parent_id" in body.model_fields_set:
+        if row.kind == "part":
+            raise HTTPException(400, "Parts cannot be moved inside another part.")
+        row.parent_id = validate_parent_id(
+            session,
+            book_id=book_id,
+            parent_id=body.parent_id,
+            chapter_kind=row.kind,
+        )
     if body.number is not None and row.kind in {"chapter", "part"}:
         row.number = body.number
     if body.full_label is not None:
@@ -179,7 +186,7 @@ def update_chapter(
         )
     if kind_changed:
         session.flush()
-        _renumber_chapters(session, book_id, book.locale)
+        renumber_book_chapters(session, book_id, book.locale)
         session.refresh(row)
     session.commit()
     session.refresh(row)
@@ -216,6 +223,8 @@ def delete_chapter(
     row = session.get(Chapter, chapter_id)
     if not row or row.book_id != book_id:
         raise HTTPException(404, "Chapter not found.")
+    if row.kind == "part":
+        orphan_children(session, row.id)
     _delete_chapter_row(session, row)
     book.updated_at = datetime.now(timezone.utc)
     session.add(book)
@@ -227,6 +236,7 @@ def delete_chapter(
         chapter.position = index
         session.add(chapter)
     if remaining:
+        renumber_book_chapters(session, book_id, book.locale)
         session.commit()
     return {"ok": True}
 
@@ -260,17 +270,11 @@ def reorder_chapters(
     by_id = {r.id: r for r in rows}
     if sorted(body.order) != sorted(by_id.keys()):
         raise HTTPException(400, "Invalid chapter order.")
-    n = 1
     for index, chapter_id in enumerate(body.order):
         row = by_id[chapter_id]
         row.position = index
-        if row.kind == "chapter":
-            row.number = n
-            row.full_label = format_chapter_label(
-                row.kind, row.number, row.title, book.locale
-            )
-            n += 1
         session.add(row)
+    renumber_book_chapters(session, book_id, book.locale)
     book.updated_at = datetime.now(timezone.utc)
     session.add(book)
     session.commit()

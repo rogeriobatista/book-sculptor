@@ -16,6 +16,7 @@ from app.layout import LayoutSettings, layout_options_payload
 from app.preview import diagnostic_payload, preview_payload
 from app.schemas import BookCreate, BookOut, BookUpdate, CoverGenerateBody
 from app.services.book_builder import load_domain_book, settings_from_book
+from app.services.book_style import merge_book_settings_json
 from app.services.import_service import import_files_into_book
 
 router = APIRouter(prefix="/books", tags=["books"])
@@ -114,7 +115,7 @@ def update_book(
     if body.mode is not None:
         book.mode = body.mode
     if body.settings is not None:
-        book.settings_json = LayoutSettings.from_dict(body.settings).to_dict()
+        book.settings_json = merge_book_settings_json(book.settings_json, body.settings)
     book.updated_at = datetime.now(timezone.utc)
     session.add(book)
     session.commit()

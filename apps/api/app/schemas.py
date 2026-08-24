@@ -57,6 +57,7 @@ class ChapterCreate(BaseModel):
     title: str = ""
     kind: str = "chapter"
     number: Optional[int] = None
+    parent_id: Optional[str] = None
     content_text: str = ""
     content_json: Optional[dict[str, Any]] = None
 
@@ -65,6 +66,7 @@ class ChapterUpdate(BaseModel):
     title: Optional[str] = None
     kind: Optional[str] = None
     number: Optional[int] = None
+    parent_id: Optional[str] = None
     full_label: Optional[str] = None
     content_text: Optional[str] = None
     content_json: Optional[dict[str, Any]] = None
@@ -74,6 +76,7 @@ class ChapterUpdate(BaseModel):
 class ChapterOut(BaseModel):
     id: str
     book_id: str
+    parent_id: Optional[str] = None
     position: int
     kind: str
     number: Optional[int]

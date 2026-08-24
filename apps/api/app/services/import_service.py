@@ -15,6 +15,7 @@ from app.db_models import User
 from app.extractors import extract_blocks
 from app.i18n_labels import format_chapter_label, normalize_locale, t
 from app.services.book_builder import content_json_from_text, text_from_domain_chapter
+from app.services.chapter_hierarchy import renumber_book_chapters
 from app.services.structure_ai import classify_structure_headings
 from app.structure import build_chapter_from_file, detect_structure
 
@@ -93,13 +94,20 @@ def _persist_domain_chapters(
 ) -> list[ChapterRow]:
     locale = normalize_locale(book.locale)
     created: list[ChapterRow] = []
+    current_part_id: str | None = None
     for index, chapter in enumerate(domain.chapters):
         text = text_from_domain_chapter(chapter)
         label = format_chapter_label(
             chapter.kind, chapter.number, chapter.title, locale
         )
+        parent_id: str | None = None
+        if chapter.kind == "part":
+            current_part_id = None
+        elif current_part_id:
+            parent_id = current_part_id
         row = ChapterRow(
             book_id=book.id,
+            parent_id=parent_id,
             position=start_position + index,
             kind=chapter.kind,
             number=chapter.number,
@@ -109,7 +117,11 @@ def _persist_domain_chapters(
             content_json=content_json_from_text(text),
         )
         session.add(row)
+        session.flush()
+        if chapter.kind == "part":
+            current_part_id = row.id
         created.append(row)
+    renumber_book_chapters(session, book.id, locale)
     return created
 
 

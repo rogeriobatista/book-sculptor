@@ -2,6 +2,7 @@
 
 import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useState } from "react";
+import { VersionDiffModal } from "@/components/VersionDiffModal";
 import { clientApiFetch, isAbortError } from "@/lib/client-api";
 import { useStableAuth } from "@/lib/use-app-auth";
 
@@ -43,6 +44,8 @@ type Props = {
   onMeta?: (meta: { openCount: number }) => void;
   onCommentsChange?: (comments: ChapterCommentItem[]) => void;
   onJumpToQuote?: (quote: string) => void;
+  activeCommentId?: string | null;
+  currentChapterText?: string;
 };
 
 type Tab = "comments" | "history" | "activity";
@@ -58,6 +61,8 @@ export function ChapterReviewPanel({
   onMeta,
   onCommentsChange,
   onJumpToQuote,
+  activeCommentId = null,
+  currentChapterText = "",
 }: Props) {
   const { getTokenRef } = useStableAuth();
   const t = useTranslations("studio");
@@ -69,6 +74,11 @@ export function ChapterReviewPanel({
   const [suggestionText, setSuggestionText] = useState("");
   const [mode, setMode] = useState<"comment" | "suggestion">("comment");
   const [busy, setBusy] = useState(false);
+  const [pendingRestore, setPendingRestore] = useState<{
+    versionId: string;
+    label: string;
+    text: string;
+  } | null>(null);
 
   const load = useCallback(
     async (signal?: AbortSignal) => {
@@ -172,16 +182,36 @@ export function ChapterReviewPanel({
     }
   }
 
-  async function restoreVersion(versionId: string) {
+  async function openVersionDiff(versionId: string, label: string) {
     if (!canEdit) return;
     setBusy(true);
     try {
       const token = await getTokenRef.current();
+      const version = await clientApiFetch<{ content_text: string }>(
+        `/api/v1/books/${bookId}/chapters/${chapterId}/versions/${versionId}`,
+        token,
+      );
+      setPendingRestore({
+        versionId,
+        label,
+        text: version.content_text || "",
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function confirmRestoreVersion() {
+    if (!pendingRestore || !canEdit) return;
+    setBusy(true);
+    try {
+      const token = await getTokenRef.current();
       await clientApiFetch(
-        `/api/v1/books/${bookId}/chapters/${chapterId}/versions/${versionId}/restore`,
+        `/api/v1/books/${bookId}/chapters/${chapterId}/versions/${pendingRestore.versionId}/restore`,
         token,
         { method: "POST" },
       );
+      setPendingRestore(null);
       await load();
       onRestored();
     } finally {
@@ -325,7 +355,14 @@ export function ChapterReviewPanel({
 
           <ul className="review-list">
             {comments.map((item) => (
-              <li key={item.id} className="review-item" data-kind={item.kind} data-status={item.status}>
+              <li
+                key={item.id}
+                id={`review-item-${item.id}`}
+                className="review-item"
+                data-kind={item.kind}
+                data-status={item.status}
+                data-active={activeCommentId === item.id ? "true" : undefined}
+              >
                 <p className="review-item-meta">
                   <strong>{item.author.email || t("reviewUnknown")}</strong>
                   <span className="review-status-pill" data-status={item.status}>
@@ -419,7 +456,12 @@ export function ChapterReviewPanel({
                   type="button"
                   className="btn btn-ghost btn-compact"
                   disabled={busy}
-                  onClick={() => void restoreVersion(item.id)}
+                  onClick={() =>
+                    void openVersionDiff(
+                      item.id,
+                      `${item.author.email || t("reviewUnknown")} · ${new Date(item.created_at).toLocaleString()}`,
+                    )
+                  }
                 >
                   {t("reviewRestore")}
                 </button>
@@ -428,6 +470,17 @@ export function ChapterReviewPanel({
           ))}
           </ul>
         </div>
+      ) : null}
+
+      {pendingRestore ? (
+        <VersionDiffModal
+          versionLabel={pendingRestore.label}
+          currentText={currentChapterText}
+          versionText={pendingRestore.text}
+          busy={busy}
+          onConfirm={() => void confirmRestoreVersion()}
+          onCancel={() => setPendingRestore(null)}
+        />
       ) : null}
 
       {tab === "activity" ? (

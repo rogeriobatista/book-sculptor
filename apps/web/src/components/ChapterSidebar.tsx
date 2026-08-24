@@ -1,13 +1,16 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { ConfirmModal } from "@/components/ConfirmModal";
 import { type Chapter } from "@/lib/client-api";
 import { useDebouncedValue } from "@/lib/use-debounce";
 import {
+  buildChapterTree,
   chapterDisplayLabel,
   chapterShortTitle,
+  filterChapterIdsWithAncestors,
+  flattenChapterTree,
   kindTranslationKey,
 } from "@/lib/chapter-structure";
 
@@ -17,7 +20,8 @@ type Props = {
   busy?: boolean;
   readOnly?: boolean;
   onSelect: (id: string) => void;
-  onAdd: () => void;
+  onAddChapter: (parentId?: string | null) => void;
+  onAddPart: () => void;
   onRename: (id: string, title: string) => Promise<void> | void;
   onDelete: (id: string) => Promise<void> | void;
   onDeleteAll: () => Promise<void> | void;
@@ -40,7 +44,8 @@ export function ChapterSidebar({
   busy = false,
   readOnly = false,
   onSelect,
-  onAdd,
+  onAddChapter,
+  onAddPart,
   onRename,
   onDelete,
   onDeleteAll,
@@ -56,20 +61,22 @@ export function ChapterSidebar({
   const [dragId, setDragId] = useState<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
+  const [collapsedParts, setCollapsedParts] = useState<Set<string>>(() => new Set());
   const debouncedFilter = useDebouncedValue(filter.trim().toLowerCase(), 300);
 
   useEffect(() => {
     setItems(chapters);
   }, [chapters]);
 
-  const visibleItems = useMemo(() => {
-    if (!debouncedFilter) return items;
-    return items.filter((chapter) => {
-      const label = chapterDisplayLabel(chapter).toLowerCase();
-      const title = (chapter.title || chapter.full_label || "").toLowerCase();
-      return label.includes(debouncedFilter) || title.includes(debouncedFilter);
-    });
-  }, [items, debouncedFilter]);
+  const visibleIds = useMemo(
+    () => filterChapterIdsWithAncestors(items, debouncedFilter),
+    [debouncedFilter, items],
+  );
+
+  const treeRows = useMemo(() => {
+    const roots = buildChapterTree(items);
+    return flattenChapterTree(roots, collapsedParts, visibleIds);
+  }, [collapsedParts, items, visibleIds]);
 
   const pendingTitle =
     pendingDelete?.title || pendingDelete?.full_label || t("chapter");
@@ -79,20 +86,40 @@ export function ChapterSidebar({
     setOverId(null);
   }
 
+  function togglePart(partId: string) {
+    setCollapsedParts((prev) => {
+      const next = new Set(prev);
+      if (next.has(partId)) next.delete(partId);
+      else next.add(partId);
+      return next;
+    });
+  }
+
   return (
     <aside className="chapter-sidebar">
       <div className="chapter-sidebar-head">
         <h2>{t("chaptersNav")}</h2>
         {!readOnly ? (
-          <button
-            type="button"
-            className="btn btn-primary btn-compact chapter-add-btn"
-            disabled={busy}
-            onClick={onAdd}
-            title={t("newChapter")}
-          >
-            + {t("newChapter")}
-          </button>
+          <div className="chapter-sidebar-head-actions">
+            <button
+              type="button"
+              className="btn btn-ghost btn-compact"
+              disabled={busy}
+              onClick={onAddPart}
+              title={t("newPart")}
+            >
+              + {t("newPart")}
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary btn-compact chapter-add-btn"
+              disabled={busy}
+              onClick={() => onAddChapter(null)}
+              title={t("newChapter")}
+            >
+              + {t("newChapter")}
+            </button>
+          </div>
         ) : null}
       </div>
 
@@ -115,21 +142,27 @@ export function ChapterSidebar({
 
       {items.length === 0 ? (
         <p className="muted chapter-sidebar-empty">{t("emptyChapters")}</p>
-      ) : visibleItems.length === 0 ? (
+      ) : treeRows.length === 0 ? (
         <p className="muted chapter-sidebar-empty">{t("filterChaptersEmpty")}</p>
       ) : (
         <ul className="chapter-sidebar-list">
-          {visibleItems.map((chapter, index) => {
+          {treeRows.map(({ node, depth }, index) => {
+            const chapter = node.chapter;
             const active = chapter.id === activeId;
             const editing = editingId === chapter.id;
             const dragging = dragId === chapter.id;
             const dropTarget = overId === chapter.id && dragId !== chapter.id;
+            const isPart = chapter.kind === "part";
+            const collapsed = isPart && collapsedParts.has(chapter.id);
             return (
               <li
                 key={chapter.id}
+                className="chapter-sidebar-item-wrap"
                 data-active={active}
                 data-dragging={dragging}
                 data-drop-target={dropTarget}
+                data-depth={depth}
+                style={{ "--chapter-depth": depth } as CSSProperties}
                 draggable={!readOnly && !busy && !editing}
                 onDragStart={(event) => {
                   if (busy || editing) {
@@ -191,6 +224,19 @@ export function ChapterSidebar({
                 ) : (
                   <>
                     <div className="chapter-sidebar-row">
+                      {isPart ? (
+                        <button
+                          type="button"
+                          className="chapter-part-toggle"
+                          aria-expanded={!collapsed}
+                          aria-label={collapsed ? t("expandPart") : t("collapsePart")}
+                          onClick={() => togglePart(chapter.id)}
+                        >
+                          {collapsed ? "▸" : "▾"}
+                        </button>
+                      ) : (
+                        <span className="chapter-part-toggle-spacer" aria-hidden="true" />
+                      )}
                       {!readOnly ? (
                         <span
                           className="chapter-drag-handle"
@@ -205,7 +251,9 @@ export function ChapterSidebar({
                         className="chapter-sidebar-item"
                         onClick={() => onSelect(chapter.id)}
                       >
-                        <span className="chapter-index">{index + 1}</span>
+                        <span className="chapter-index">
+                          {chapter.number ?? index + 1}
+                        </span>
                         <span className="chapter-sidebar-copy">
                           <span className={`kind-badge kind-badge-${chapter.kind}`}>
                             {t(kindTranslationKey(chapter.kind))}
@@ -224,6 +272,16 @@ export function ChapterSidebar({
                     </div>
                     {!readOnly ? (
                       <div className="chapter-sidebar-actions">
+                        {isPart ? (
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-compact"
+                            disabled={busy}
+                            onClick={() => onAddChapter(chapter.id)}
+                          >
+                            {t("addChapterToPart")}
+                          </button>
+                        ) : null}
                         <button
                           type="button"
                           className="btn btn-ghost btn-compact"

@@ -25,6 +25,35 @@ engine = create_engine(
 def init_db() -> None:
     SQLModel.metadata.create_all(engine)
     _ensure_book_cover_columns()
+    _ensure_chapter_parent_column()
+
+
+def _ensure_chapter_parent_column() -> None:
+    """Add parent_id on existing DBs (create_all does not alter tables)."""
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(engine)
+    if "chapters" not in inspector.get_table_names():
+        return
+    existing = {col["name"] for col in inspector.get_columns("chapters")}
+    if "parent_id" in existing:
+        return
+    dialect = engine.dialect.name
+    with engine.begin() as conn:
+        if dialect == "sqlite":
+            conn.execute(text("ALTER TABLE chapters ADD COLUMN parent_id VARCHAR"))
+            conn.execute(
+                text("CREATE INDEX IF NOT EXISTS ix_chapters_parent_id ON chapters (parent_id)")
+            )
+        else:
+            conn.execute(
+                text("ALTER TABLE chapters ADD COLUMN IF NOT EXISTS parent_id VARCHAR")
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_chapters_parent_id ON chapters (parent_id)"
+                )
+            )
 
 
 def _ensure_book_cover_columns() -> None:

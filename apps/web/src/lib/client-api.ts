@@ -126,6 +126,7 @@ export type Book = {
 export type Chapter = {
   id: string;
   book_id: string;
+  parent_id: string | null;
   position: number;
   kind: string;
   number: number | null;
