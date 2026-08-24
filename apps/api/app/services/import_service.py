@@ -10,6 +10,8 @@ from sqlalchemy import delete
 
 from app.db_models import Book as BookRow
 from app.db_models import Chapter as ChapterRow
+from app.db_models import ChapterActivity
+from app.db_models import ChapterComment
 from app.db_models import ChapterVersion
 from app.db_models import User
 from app.extractors import extract_blocks
@@ -69,14 +71,22 @@ def _domain_from_file(
 
 
 def _clear_chapters(session: Session, book_id: str) -> None:
-    existing = session.exec(select(ChapterRow).where(ChapterRow.book_id == book_id)).all()
-    for row in existing:
+    """Remove all chapters and dependent rows before a replace import."""
+    rows = session.exec(select(ChapterRow).where(ChapterRow.book_id == book_id)).all()
+    chapter_ids = [row.id for row in rows]
+    if chapter_ids:
         session.execute(
-            delete(ChapterVersion).where(ChapterVersion.chapter_id == row.id)
+            delete(ChapterVersion).where(ChapterVersion.chapter_id.in_(chapter_ids))
         )
+    session.execute(delete(ChapterVersion).where(ChapterVersion.book_id == book_id))
+    session.execute(delete(ChapterComment).where(ChapterComment.book_id == book_id))
+    session.execute(delete(ChapterActivity).where(ChapterActivity.book_id == book_id))
+    for row in rows:
+        row.parent_id = None
+        session.add(row)
     session.flush()
-    for row in existing:
-        session.delete(row)
+    session.execute(delete(ChapterRow).where(ChapterRow.book_id == book_id))
+    session.flush()
     session.commit()
 
 

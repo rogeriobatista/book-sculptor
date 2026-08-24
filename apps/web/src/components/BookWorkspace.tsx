@@ -23,6 +23,11 @@ import {
   isAbortError,
   isProtectedFileUrl,
 } from "@/lib/client-api";
+import {
+  defaultSectionTitle,
+  kindTranslationKey,
+  type ChapterKind,
+} from "@/lib/chapter-structure";
 import { Link } from "@/i18n/navigation";
 import { useStableAuth } from "@/lib/use-app-auth";
 import { FormEvent, useEffect, useRef, useState } from "react";
@@ -219,20 +224,24 @@ export function BookWorkspace({ bookId, locale, tab }: Props) {
     }
   }
 
-  async function addBlankChapter(parentId: string | null = null) {
+  async function addSection(kind: ChapterKind, parentId: string | null = null) {
     setBusy(true);
-    const loadingId = toast.loading(s("notifyChapterCreating"));
+    const loadingId = toast.loading(s("notifySectionCreating"));
     try {
       const token = await getToken();
-      const chapterCount = chapters.filter((c) => c.kind === "chapter").length;
+      const title = defaultSectionTitle(kind, chapters, {
+        chapter: s("chapter"),
+        part: s("part"),
+        kindLabel: (sectionKind) => s(kindTranslationKey(sectionKind)),
+      });
       const chapter = await clientApiFetch<Chapter>(
         `/api/v1/books/${bookId}/chapters`,
         token,
         {
           method: "POST",
           body: JSON.stringify({
-            title: `${s("chapter")} ${chapterCount + 1}`,
-            kind: "chapter",
+            title,
+            kind,
             parent_id: parentId,
             content_text: "",
           }),
@@ -243,48 +252,12 @@ export function BookWorkspace({ bookId, locale, tab }: Props) {
       goView("write");
       toast.update(loadingId, {
         tone: "success",
-        title: s("notifyChapterCreated"),
+        title: s("notifySectionCreated"),
       });
     } catch (err) {
       toast.update(loadingId, {
         tone: "error",
-        title: s("notifyChapterFailed"),
-        description: err instanceof Error ? err.message : undefined,
-      });
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function addBlankPart() {
-    setBusy(true);
-    const loadingId = toast.loading(s("notifyPartCreating"));
-    try {
-      const token = await getToken();
-      const partCount = chapters.filter((c) => c.kind === "part").length;
-      const chapter = await clientApiFetch<Chapter>(
-        `/api/v1/books/${bookId}/chapters`,
-        token,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            title: `${s("part")} ${partCount + 1}`,
-            kind: "part",
-            content_text: "",
-          }),
-        },
-      );
-      await load();
-      setActiveChapterId(chapter.id);
-      goView("write");
-      toast.update(loadingId, {
-        tone: "success",
-        title: s("notifyPartCreated"),
-      });
-    } catch (err) {
-      toast.update(loadingId, {
-        tone: "error",
-        title: s("notifyPartFailed"),
+        title: s("notifySectionFailed"),
         description: err instanceof Error ? err.message : undefined,
       });
     } finally {
@@ -605,8 +578,7 @@ export function BookWorkspace({ bookId, locale, tab }: Props) {
             busy={busy}
             readOnly={!canEdit}
             onSelect={(id) => setActiveChapterId(id)}
-            onAddChapter={(parentId) => void addBlankChapter(parentId ?? null)}
-            onAddPart={() => void addBlankPart()}
+            onAddSection={(kind, parentId) => void addSection(kind, parentId ?? null)}
             onRename={renameChapter}
             onDelete={deleteChapter}
             onDeleteAll={deleteAllChapters}

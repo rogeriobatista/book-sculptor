@@ -151,6 +151,45 @@ export function kindTranslationKey(
   return "kindOther";
 }
 
+export const ADD_SECTION_GROUPS: ReadonlyArray<{
+  labelKey:
+    | "addSectionGroupFront"
+    | "addSectionGroupBody"
+    | "addSectionGroupBack";
+  kinds: readonly ChapterKind[];
+}> = [
+  { labelKey: "addSectionGroupFront", kinds: ["dedication", "prologue"] },
+  { labelKey: "addSectionGroupBody", kinds: ["part", "chapter"] },
+  {
+    labelKey: "addSectionGroupBack",
+    kinds: ["epilogue", "afterword", "appendix", "other"],
+  },
+];
+
+export function defaultSectionTitle(
+  kind: ChapterKind,
+  chapters: Chapter[],
+  labels: {
+    chapter: string;
+    part: string;
+    kindLabel: (kind: ChapterKind) => string;
+  },
+): string {
+  if (kind === "chapter") {
+    const count = chapters.filter((chapter) => chapter.kind === "chapter").length;
+    return `${labels.chapter} ${count + 1}`;
+  }
+  if (kind === "part") {
+    const count = chapters.filter((chapter) => chapter.kind === "part").length;
+    return `${labels.part} ${count + 1}`;
+  }
+  return labels.kindLabel(kind);
+}
+
+export function sectionKindShowsIndex(kind: string): boolean {
+  return kind === "chapter" || kind === "part";
+}
+
 export function paragraphBlockFromText(text: string): Record<string, unknown> {
   if (isSectionLine(text)) {
     return {

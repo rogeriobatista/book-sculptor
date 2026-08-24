@@ -1,17 +1,20 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { createPortal } from "react-dom";
 import { ConfirmModal } from "@/components/ConfirmModal";
 import { type Chapter } from "@/lib/client-api";
 import { useDebouncedValue } from "@/lib/use-debounce";
 import {
+  ADD_SECTION_GROUPS,
   buildChapterTree,
-  chapterDisplayLabel,
   chapterShortTitle,
   filterChapterIdsWithAncestors,
   flattenChapterTree,
   kindTranslationKey,
+  sectionKindShowsIndex,
+  type ChapterKind,
 } from "@/lib/chapter-structure";
 
 type Props = {
@@ -20,8 +23,7 @@ type Props = {
   busy?: boolean;
   readOnly?: boolean;
   onSelect: (id: string) => void;
-  onAddChapter: (parentId?: string | null) => void;
-  onAddPart: () => void;
+  onAddSection: (kind: ChapterKind, parentId?: string | null) => void;
   onRename: (id: string, title: string) => Promise<void> | void;
   onDelete: (id: string) => Promise<void> | void;
   onDeleteAll: () => Promise<void> | void;
@@ -38,14 +40,42 @@ function moveChapter(list: Chapter[], fromId: string, toId: string): Chapter[] {
   return next;
 }
 
+function ChapterSidebarTitle({ text }: { text: string }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const [truncated, setTruncated] = useState(false);
+
+  useEffect(() => {
+    const element = ref.current;
+    if (!element) return;
+
+    const measure = () => {
+      setTruncated(element.scrollWidth > element.clientWidth + 1);
+    };
+
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [text]);
+
+  return (
+    <span
+      ref={ref}
+      className="chapter-sidebar-title"
+      title={truncated ? text : undefined}
+    >
+      {text}
+    </span>
+  );
+}
+
 export function ChapterSidebar({
   chapters,
   activeId,
   busy = false,
   readOnly = false,
   onSelect,
-  onAddChapter,
-  onAddPart,
+  onAddSection,
   onRename,
   onDelete,
   onDeleteAll,
@@ -62,7 +92,53 @@ export function ChapterSidebar({
   const [overId, setOverId] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
   const [collapsedParts, setCollapsedParts] = useState<Set<string>>(() => new Set());
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
+  const [addMenuOpen, setAddMenuOpen] = useState(false);
+  const menuRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const addMenuRef = useRef<HTMLDivElement>(null);
   const debouncedFilter = useDebouncedValue(filter.trim().toLowerCase(), 300);
+
+  const openMenuChapter = useMemo(
+    () => (openMenuId ? items.find((chapter) => chapter.id === openMenuId) ?? null : null),
+    [items, openMenuId],
+  );
+
+  function closeChapterMenu() {
+    setOpenMenuId(null);
+    setMenuPos(null);
+  }
+
+  function openChapterMenu(chapterId: string, anchor: HTMLElement) {
+    const rect = anchor.getBoundingClientRect();
+    const panelWidth = 152;
+    const left = Math.max(8, Math.min(rect.right - panelWidth, window.innerWidth - panelWidth - 8));
+    setMenuPos({ top: rect.bottom + 4, left });
+    setOpenMenuId(chapterId);
+  }
+
+  useEffect(() => {
+    if (!openMenuId && !addMenuOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (openMenuId) {
+        const menuEl = menuRefs.current.get(openMenuId);
+        if (menuEl?.contains(target)) return;
+      }
+      if (addMenuOpen && addMenuRef.current?.contains(target)) return;
+      closeChapterMenu();
+      setAddMenuOpen(false);
+    };
+    const onReposition = () => closeChapterMenu();
+    window.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("resize", onReposition);
+    window.addEventListener("scroll", onReposition, true);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("resize", onReposition);
+      window.removeEventListener("scroll", onReposition, true);
+    };
+  }, [openMenuId, addMenuOpen]);
 
   useEffect(() => {
     setItems(chapters);
@@ -97,38 +173,77 @@ export function ChapterSidebar({
 
   return (
     <aside className="chapter-sidebar">
-      <div className="chapter-sidebar-head">
-        <h2>{t("chaptersNav")}</h2>
+      <div className="chapter-sidebar-toolbar">
+        <div className="chapter-sidebar-head">
+          <div className="chapter-sidebar-head-copy">
+            <h2>{t("chaptersNav")}</h2>
+            {items.length > 0 ? (
+              <span className="chapter-sidebar-count" aria-label={t("chapterCount", { count: items.length })}>
+                {items.length}
+              </span>
+            ) : null}
+          </div>
+          {items.length > 1 && !readOnly ? (
+            <p className="chapter-sidebar-meta muted">{t("reorderHint")}</p>
+          ) : null}
+        </div>
+
         {!readOnly ? (
-          <div className="chapter-sidebar-head-actions">
+          <div className="chapter-add-menu" ref={addMenuRef}>
             <button
               type="button"
-              className="btn btn-ghost btn-compact"
+              className="btn btn-primary btn-compact chapter-add-trigger"
               disabled={busy}
-              onClick={onAddPart}
-              title={t("newPart")}
+              aria-expanded={addMenuOpen}
+              aria-haspopup="menu"
+              aria-label={t("addSectionMenuLabel")}
+              onClick={() => {
+                setAddMenuOpen((open) => !open);
+                closeChapterMenu();
+              }}
             >
-              + {t("newPart")}
+              <span>+ {t("addSection")}</span>
+              <span className="chapter-add-chevron" aria-hidden="true">
+                ▾
+              </span>
             </button>
-            <button
-              type="button"
-              className="btn btn-primary btn-compact chapter-add-btn"
-              disabled={busy}
-              onClick={() => onAddChapter(null)}
-              title={t("newChapter")}
-            >
-              + {t("newChapter")}
-            </button>
+            {addMenuOpen ? (
+              <div className="chapter-add-panel" role="menu" aria-label={t("addSectionMenuLabel")}>
+                {ADD_SECTION_GROUPS.map((group) => (
+                  <div key={group.labelKey} className="chapter-add-group">
+                    <p className="chapter-add-group-label">{t(group.labelKey)}</p>
+                    <div className="chapter-add-group-items">
+                      {group.kinds.map((kind) => (
+                        <button
+                          key={kind}
+                          type="button"
+                          className="chapter-add-item"
+                          role="menuitem"
+                          disabled={busy}
+                          onClick={() => {
+                            setAddMenuOpen(false);
+                            onAddSection(kind);
+                          }}
+                        >
+                          <span className={`kind-badge kind-badge-${kind}`}>
+                            {t(kindTranslationKey(kind))}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
           </div>
         ) : null}
       </div>
 
-      {items.length > 1 && !readOnly ? (
-        <p className="muted chapter-reorder-hint">{t("reorderHint")}</p>
-      ) : null}
-
-      {items.length > 4 ? (
+      {items.length >= 3 ? (
         <label className="chapter-sidebar-filter">
+          <span className="chapter-sidebar-filter-icon" aria-hidden="true">
+            ⌕
+          </span>
           <span className="sr-only">{t("filterChapters")}</span>
           <input
             type="search"
@@ -154,11 +269,15 @@ export function ChapterSidebar({
             const dropTarget = overId === chapter.id && dragId !== chapter.id;
             const isPart = chapter.kind === "part";
             const collapsed = isPart && collapsedParts.has(chapter.id);
+            const displayTitle = chapterShortTitle(chapter) || t("chapter");
+            const menuOpen = openMenuId === chapter.id;
             return (
               <li
                 key={chapter.id}
                 className="chapter-sidebar-item-wrap"
                 data-active={active}
+                data-kind={chapter.kind}
+                data-menu-open={menuOpen}
                 data-dragging={dragging}
                 data-drop-target={dropTarget}
                 data-depth={depth}
@@ -223,83 +342,61 @@ export function ChapterSidebar({
                   </form>
                 ) : (
                   <>
-                    <div className="chapter-sidebar-row">
-                      {isPart ? (
-                        <button
-                          type="button"
-                          className="chapter-part-toggle"
-                          aria-expanded={!collapsed}
-                          aria-label={collapsed ? t("expandPart") : t("collapsePart")}
-                          onClick={() => togglePart(chapter.id)}
-                        >
-                          {collapsed ? "▸" : "▾"}
-                        </button>
-                      ) : (
-                        <span className="chapter-part-toggle-spacer" aria-hidden="true" />
-                      )}
-                      {!readOnly ? (
-                        <span
-                          className="chapter-drag-handle"
-                          title={t("dragChapter")}
-                          aria-hidden="true"
-                        >
-                          ⋮⋮
-                        </span>
-                      ) : null}
+                    {!readOnly ? (
+                      <span
+                        className="chapter-drag-handle"
+                        title={t("dragChapter")}
+                        aria-hidden="true"
+                      >
+                        ⠿
+                      </span>
+                    ) : null}
+                    {isPart ? (
                       <button
                         type="button"
-                        className="chapter-sidebar-item"
-                        onClick={() => onSelect(chapter.id)}
+                        className="chapter-part-toggle"
+                        aria-expanded={!collapsed}
+                        aria-label={collapsed ? t("expandPart") : t("collapsePart")}
+                        onClick={() => togglePart(chapter.id)}
                       >
-                        <span className="chapter-index">
-                          {chapter.number ?? index + 1}
-                        </span>
-                        <span className="chapter-sidebar-copy">
-                          <span className={`kind-badge kind-badge-${chapter.kind}`}>
-                            {t(kindTranslationKey(chapter.kind))}
-                          </span>
-                          <span className="chapter-sidebar-title">
-                            {chapterShortTitle(chapter) || t("chapter")}
-                          </span>
-                          {chapter.full_label &&
-                          chapter.full_label !== chapterShortTitle(chapter) ? (
-                            <span className="muted chapter-sidebar-sub">
-                              {chapterDisplayLabel(chapter)}
-                            </span>
-                          ) : null}
-                        </span>
+                        {collapsed ? "▸" : "▾"}
                       </button>
-                    </div>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="chapter-sidebar-item"
+                      onClick={() => onSelect(chapter.id)}
+                    >
+                      <span className={`kind-badge kind-badge-${chapter.kind}`}>
+                        {t(kindTranslationKey(chapter.kind))}
+                        {sectionKindShowsIndex(chapter.kind) && chapter.number
+                          ? ` ${chapter.number}`
+                          : sectionKindShowsIndex(chapter.kind)
+                            ? ` ${index + 1}`
+                            : ""}
+                      </span>
+                      <ChapterSidebarTitle text={displayTitle} />
+                    </button>
                     {!readOnly ? (
-                      <div className="chapter-sidebar-actions">
-                        {isPart ? (
-                          <button
-                            type="button"
-                            className="btn btn-ghost btn-compact"
-                            disabled={busy}
-                            onClick={() => onAddChapter(chapter.id)}
-                          >
-                            {t("addChapterToPart")}
-                          </button>
-                        ) : null}
+                      <div
+                        className="chapter-item-menu"
+                        onPointerDown={(event) => event.stopPropagation()}
+                      >
                         <button
                           type="button"
-                          className="btn btn-ghost btn-compact"
+                          className="chapter-menu-trigger"
+                          aria-label={t("chapterMoreActions")}
+                          aria-expanded={menuOpen}
+                          aria-haspopup="menu"
                           disabled={busy}
-                          onClick={() => {
-                            setEditingId(chapter.id);
-                            setDraft(chapter.title || "");
+                          onPointerDown={(event) => event.stopPropagation()}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            if (menuOpen) closeChapterMenu();
+                            else openChapterMenu(chapter.id, event.currentTarget);
                           }}
                         >
-                          {t("renameChapter")}
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-ghost btn-compact danger"
-                          disabled={busy}
-                          onClick={() => setPendingDelete(chapter)}
-                        >
-                          {t("deleteChapter")}
+                          ⋯
                         </button>
                       </div>
                     ) : null}
@@ -312,14 +409,16 @@ export function ChapterSidebar({
       )}
 
       {!readOnly && items.length > 0 ? (
-        <button
-          type="button"
-          className="chapter-sidebar-footer danger-link"
-          disabled={busy}
-          onClick={() => setPendingDeleteAll(true)}
-        >
-          {t("deleteAllChapters")}
-        </button>
+        <footer className="chapter-sidebar-foot">
+          <button
+            type="button"
+            className="chapter-sidebar-danger"
+            disabled={busy}
+            onClick={() => setPendingDeleteAll(true)}
+          >
+            {t("deleteAllChapters")}
+          </button>
+        </footer>
       ) : null}
 
       <ConfirmModal
@@ -357,6 +456,62 @@ export function ChapterSidebar({
           void onDeleteAll();
         }}
       />
+
+      {openMenuId && menuPos && openMenuChapter && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              className="chapter-menu-panel chapter-menu-panel-portal"
+              role="menu"
+              style={{ top: menuPos.top, left: menuPos.left }}
+              ref={(element) => {
+                if (element) menuRefs.current.set(openMenuId, element);
+                else menuRefs.current.delete(openMenuId);
+              }}
+              onPointerDown={(event) => event.stopPropagation()}
+            >
+              {openMenuChapter.kind === "part" ? (
+                <button
+                  type="button"
+                  className="chapter-menu-item"
+                  role="menuitem"
+                  disabled={busy}
+                  onClick={() => {
+                    closeChapterMenu();
+                    onAddSection("chapter", openMenuChapter.id);
+                  }}
+                >
+                  {t("addChapterToPart")}
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className="chapter-menu-item"
+                role="menuitem"
+                disabled={busy}
+                onClick={() => {
+                  closeChapterMenu();
+                  setEditingId(openMenuChapter.id);
+                  setDraft(openMenuChapter.title || "");
+                }}
+              >
+                {t("renameChapter")}
+              </button>
+              <button
+                type="button"
+                className="chapter-menu-item chapter-menu-item-danger"
+                role="menuitem"
+                disabled={busy}
+                onClick={() => {
+                  closeChapterMenu();
+                  setPendingDelete(openMenuChapter);
+                }}
+              >
+                {t("deleteChapter")}
+              </button>
+            </div>,
+            document.body,
+          )
+        : null}
     </aside>
   );
 }
