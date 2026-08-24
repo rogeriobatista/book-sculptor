@@ -11,6 +11,7 @@ type Props = {
   onClose: () => void;
   selectionActive: boolean;
   openComments: number;
+  allowedTabs?: EditorToolsTab[];
   aiSlot: ReactNode;
   critiqueSlot: ReactNode;
   reviewSlot: ReactNode;
@@ -23,6 +24,7 @@ export function EditorToolsPanel({
   onClose,
   selectionActive,
   openComments,
+  allowedTabs,
   aiSlot,
   critiqueSlot,
   reviewSlot,
@@ -30,21 +32,27 @@ export function EditorToolsPanel({
 }: Props) {
   const t = useTranslations("studio");
 
-  const tabs: { id: EditorToolsTab; label: string; hint: string; badge?: number }[] = [
-    { id: "ai", label: t("toolsTabAi"), hint: t("toolsTabAiHint") },
-    {
-      id: "critique",
-      label: t("toolsTabCritique"),
-      hint: t("toolsTabCritiqueHint"),
-    },
-    {
-      id: "review",
-      label: t("toolsTabReview"),
-      hint: t("toolsTabReviewHint"),
-      badge: openComments > 0 ? openComments : undefined,
-    },
-    { id: "structure", label: t("toolsTabStructure"), hint: t("toolsTabStructureHint") },
-  ];
+  const tabs = (
+    [
+      { id: "ai" as const, label: t("toolsTabAi"), hint: t("toolsTabAiHint") },
+      {
+        id: "critique" as const,
+        label: t("toolsTabCritique"),
+        hint: t("toolsTabCritiqueHint"),
+      },
+      {
+        id: "review" as const,
+        label: t("toolsTabReview"),
+        hint: t("toolsTabReviewHint"),
+        badge: openComments > 0 ? openComments : undefined,
+      },
+      {
+        id: "structure" as const,
+        label: t("toolsTabStructure"),
+        hint: t("toolsTabStructureHint"),
+      },
+    ] satisfies { id: EditorToolsTab; label: string; hint: string; badge?: number }[]
+  ).filter((item) => !allowedTabs || allowedTabs.includes(item.id));
 
   const active = tabs.find((item) => item.id === activeTab);
 

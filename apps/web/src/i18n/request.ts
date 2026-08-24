@@ -6,7 +6,7 @@ import en from "../../messages/en.json";
 import ptBR from "../../messages/pt-BR.json";
 import es from "../../messages/es.json";
 
-/** Message catalogs keyed by locale. Bump when adding keys: phase3-track-changes. */
+/** Message catalogs keyed by locale. Bump when adding keys: publication-hub. */
 const catalogs = {
   en,
   "pt-BR": ptBR,

@@ -81,6 +81,7 @@ type Props = {
   onSelectChapter: (id: string) => void;
   onSaved?: (chapter: Chapter) => void;
   onTitleSaved?: (chapter: Chapter) => void;
+  workspaceMode?: "write" | "review";
 };
 
 function escapeHtml(text: string): string {
@@ -124,6 +125,7 @@ export function ChapterEditor({
   onSelectChapter,
   onSaved,
   onTitleSaved,
+  workspaceMode = "write",
 }: Props) {
   const { getToken } = useAppAuth();
   const toast = useToast();
@@ -138,7 +140,9 @@ export function ChapterEditor({
   const [reviewKey, setReviewKey] = useState(0);
   const [toolsOpen, setToolsOpen] = useState(true);
   const [focusMode, setFocusMode] = useState(false);
-  const [toolsTab, setToolsTab] = useState<EditorToolsTab>("ai");
+  const [toolsTab, setToolsTab] = useState<EditorToolsTab>(
+    workspaceMode === "review" ? "critique" : "ai",
+  );
   const [openReviewCount, setOpenReviewCount] = useState(0);
   const [reviewComments, setReviewComments] = useState<ChapterCommentItem[]>([]);
   const [critiqueFindings, setCritiqueFindings] = useState<CriticalFinding[]>([]);
@@ -158,6 +162,13 @@ export function ChapterEditor({
   const persistGen = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    setToolsTab(workspaceMode === "review" ? "critique" : "ai");
+  }, [workspaceMode, chapter.id]);
+
+  const editorToolTabs: EditorToolsTab[] | undefined =
+    workspaceMode === "review" ? ["critique", "review", "structure"] : undefined;
 
   const chips: { action: AiAction; label: string; prompt?: string }[] = [
     { action: "continue", label: t("chipContinue") },
@@ -637,6 +648,7 @@ export function ChapterEditor({
       className="write-workspace"
       data-focus={focusMode ? "true" : "false"}
       data-tools-open={toolsOpen ? "true" : "false"}
+      data-workspace-mode={workspaceMode}
     >
       <div className="editor-layout">
         <section className="editor-canvas" aria-label={t("editorCanvasLabel")}>
@@ -737,6 +749,7 @@ export function ChapterEditor({
             onClose={() => setToolsOpen(false)}
             selectionActive={Boolean(selectionQuote)}
             openComments={openReviewCount}
+            allowedTabs={editorToolTabs}
             aiSlot={
               <EditorAiPanel
                 chips={chips}

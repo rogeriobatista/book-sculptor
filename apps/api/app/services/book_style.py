@@ -127,4 +127,12 @@ def merge_book_settings_json(
         merged["ai_style"] = parse_style_profile(incoming["ai_style"]).model_dump()
     elif existing.get("ai_style"):
         merged["ai_style"] = parse_style_profile(existing["ai_style"]).model_dump()
+    if "publication" in incoming:
+        from app.services.publication_profile import parse_publication_profile
+
+        merged["publication"] = parse_publication_profile(incoming["publication"]).model_dump()
+    elif existing.get("publication"):
+        from app.services.publication_profile import parse_publication_profile
+
+        merged["publication"] = parse_publication_profile(existing["publication"]).model_dump()
     return merged

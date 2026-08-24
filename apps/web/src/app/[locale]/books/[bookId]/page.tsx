@@ -12,7 +12,9 @@ export default async function BookDetailPage({ params, searchParams }: Props) {
   setRequestLocale(locale);
   const active = [
     "write",
+    "review",
     "format",
+    "publish",
     "preview",
     "team",
     "settings",

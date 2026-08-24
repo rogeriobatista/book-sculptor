@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.db import init_db
-from app.routers import ai, billing, books, chapters, collaboration, exports, files, marketplace, me, members
+from app.routers import ai, billing, books, chapters, collaboration, exports, files, marketplace, me, members, publication, social
 
 settings = get_settings()
 
@@ -31,6 +31,8 @@ app.include_router(ai.router, prefix="/api/v1")
 app.include_router(members.router, prefix="/api/v1")
 app.include_router(collaboration.router, prefix="/api/v1")
 app.include_router(marketplace.router, prefix="/api/v1")
+app.include_router(publication.router, prefix="/api/v1")
+app.include_router(social.router, prefix="/api/v1")
 app.include_router(files.router, prefix="/api/v1")
 
 

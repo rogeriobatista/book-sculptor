@@ -2,8 +2,6 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
-import { ExportActions, type ExportFormat } from "@/components/ExportActions";
-import { CoverPanel } from "@/components/CoverPanel";
 import { type Book, clientApiFetch, isAbortError } from "@/lib/client-api";
 import { useStableAuth } from "@/lib/use-app-auth";
 import { useToast } from "@/components/ToastProvider";
@@ -19,17 +17,11 @@ type LayoutOptions = {
 type Props = {
   book: Book;
   onSaved: (book: Book) => void;
-  busy?: boolean;
-  canExport?: boolean;
-  onExport?: (format: ExportFormat) => void;
 };
 
 export function FormatPanel({
   book,
   onSaved,
-  busy: exportBusy = false,
-  canExport = false,
-  onExport,
 }: Props) {
   const { getTokenRef } = useStableAuth();
   const toast = useToast();
@@ -100,10 +92,8 @@ export function FormatPanel({
     <div className="format-panel">
       <header className="format-panel-head">
         <h2>{t("formatTitle")}</h2>
-        <p className="muted">{t("formatLead")}</p>
+        <p className="muted">{t("formatLeadTypography")}</p>
       </header>
-
-      <CoverPanel book={book} onSaved={onSaved} />
 
       <form className="format-grid" onSubmit={onSubmit}>
         <h3 className="format-section-title">{t("formatTypographyTitle")}</h3>
@@ -217,15 +207,6 @@ export function FormatPanel({
           {common("save")}
         </button>
       </form>
-
-      {onExport ? (
-        <ExportActions
-          variant="cards"
-          busy={exportBusy || busy}
-          disabled={!canExport}
-          onExport={onExport}
-        />
-      ) : null}
     </div>
   );
 }

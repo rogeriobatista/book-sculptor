@@ -5,6 +5,7 @@ import { ChapterEditor } from "@/components/ChapterEditor";
 import { ChapterSidebar } from "@/components/ChapterSidebar";
 import { ExportActions, type ExportFormat } from "@/components/ExportActions";
 import { FormatPanel } from "@/components/FormatPanel";
+import { PublicationHub } from "@/components/PublicationHub";
 import {
   ImportManuscriptModal,
   type ImportMode,
@@ -40,7 +41,17 @@ type Me = {
   plan: string;
 };
 
-type StudioView = "write" | "format" | "preview" | "team" | "settings";
+type StudioView = "write" | "review" | "format" | "publish" | "preview" | "team" | "settings";
+
+const STUDIO_VIEWS: StudioView[] = [
+  "write",
+  "review",
+  "format",
+  "publish",
+  "preview",
+  "team",
+  "settings",
+];
 
 export function BookWorkspace({ bookId, locale, tab }: Props) {
   const { isLoaded, isSignedIn, getToken, getTokenRef } = useStableAuth();
@@ -54,11 +65,7 @@ export function BookWorkspace({ bookId, locale, tab }: Props) {
   const [me, setMe] = useState<Me | null>(null);
   const [activeChapterId, setActiveChapterId] = useState<string | null>(null);
   const [view, setView] = useState<StudioView>(
-    (["write", "format", "preview", "team", "settings"] as StudioView[]).includes(
-      tab as StudioView,
-    )
-      ? (tab as StudioView)
-      : "write",
+    STUDIO_VIEWS.includes(tab as StudioView) ? (tab as StudioView) : "write",
   );
   const [importOpen, setImportOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -76,14 +83,13 @@ export function BookWorkspace({ bookId, locale, tab }: Props) {
     chapters.find((c) => c.id === activeChapterId) || chapters[0] || null;
 
   useEffect(() => {
-    const allowed = ["write", "format", "preview", "team", "settings"];
-    if (allowed.includes(tab)) setView(tab as StudioView);
+    if (STUDIO_VIEWS.includes(tab as StudioView)) setView(tab as StudioView);
   }, [tab]);
 
   useEffect(() => {
     const onPop = () => {
       const next = new URLSearchParams(window.location.search).get("tab") || "write";
-      if (["write", "format", "preview", "team", "settings"].includes(next)) {
+      if (STUDIO_VIEWS.includes(next as StudioView)) {
         setView(next as StudioView);
       }
     };
@@ -485,12 +491,40 @@ export function BookWorkspace({ bookId, locale, tab }: Props) {
     }
   }
 
-  const nav: { id: StudioView; label: string; hint: string }[] = [
-    { id: "write", label: s("flowWrite"), hint: s("flowWriteHint") },
-    { id: "format", label: s("flowFormat"), hint: s("flowFormatHint") },
-    { id: "preview", label: s("flowPreview"), hint: s("flowPreviewHint") },
-    { id: "team", label: s("flowTeam"), hint: s("flowTeamHint") },
-    { id: "settings", label: s("flowSettings"), hint: s("flowSettingsHint") },
+  const navGroups: {
+    id: string;
+    label: string;
+    items: { id: StudioView; label: string; hint: string }[];
+  }[] = [
+    {
+      id: "creation",
+      label: s("flowGroupCreation"),
+      items: [
+        { id: "write", label: s("flowWrite"), hint: s("flowWriteHint") },
+        { id: "review", label: s("flowReview"), hint: s("flowReviewHint") },
+      ],
+    },
+    {
+      id: "production",
+      label: s("flowGroupProduction"),
+      items: [
+        { id: "format", label: s("flowFormat"), hint: s("flowFormatHint") },
+        { id: "preview", label: s("flowPreview"), hint: s("flowPreviewHint") },
+      ],
+    },
+    {
+      id: "publish",
+      label: s("flowGroupPublish"),
+      items: [{ id: "publish", label: s("flowPublish"), hint: s("flowPublishHint") }],
+    },
+    {
+      id: "manage",
+      label: s("flowGroupManage"),
+      items: [
+        { id: "team", label: s("flowTeam"), hint: s("flowTeamHint") },
+        { id: "settings", label: s("flowSettings"), hint: s("flowSettingsHint") },
+      ],
+    },
   ];
 
   return (
@@ -511,41 +545,59 @@ export function BookWorkspace({ bookId, locale, tab }: Props) {
           </div>
         </div>
 
-        <nav className="studio-flow-nav" aria-label={s("flowNav")}>
-          {nav.map((item) => (
+        <div className="studio-topbar-actions" aria-label={s("studioContextTools")}>
+          {(view === "write" || view === "review") && (
             <button
-              key={item.id}
               type="button"
-              className="studio-flow-tab"
-              data-active={view === item.id}
-              title={item.hint}
-              aria-current={view === item.id ? "page" : undefined}
-              onClick={() => goView(item.id)}
+              className="btn btn-ghost studio-action-secondary"
+              disabled={busy}
+              onClick={() => setImportOpen(true)}
+              title={s("importPdfDocx")}
             >
-              {item.label}
+              {s("importShort")}
             </button>
-          ))}
-        </nav>
-
-        <div className="studio-topbar-actions">
-          <button
-            type="button"
-            className="btn btn-ghost studio-action-secondary"
-            disabled={busy}
-            onClick={() => setImportOpen(true)}
-            title={s("importPdfDocx")}
-          >
-            {s("importShort")}
-          </button>
-          <ExportActions
-            busy={busy}
-            disabled={chapters.length === 0}
-            onExport={(format) => void onExport(format)}
-          />
+          )}
+          {(view === "write" ||
+            view === "review" ||
+            view === "format" ||
+            view === "preview" ||
+            view === "publish") && (
+            <ExportActions
+              busy={busy}
+              disabled={chapters.length === 0}
+              onExport={(format) => void onExport(format)}
+            />
+          )}
         </div>
       </header>
 
-      {view === "write" && (
+      <div className="studio-body">
+        <nav className="studio-module-nav" aria-label={s("flowNav")}>
+          {navGroups.map((group) => (
+            <div key={group.id} className="studio-module-group" data-group={group.id}>
+              <span className="studio-module-group-label">{group.label}</span>
+              <ul className="studio-module-list">
+                {group.items.map((item) => (
+                  <li key={item.id}>
+                    <button
+                      type="button"
+                      className="studio-module-link"
+                      data-active={view === item.id}
+                      title={item.hint}
+                      aria-current={view === item.id ? "page" : undefined}
+                      onClick={() => goView(item.id)}
+                    >
+                      {item.label}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </nav>
+
+        <div className="studio-content">
+      {(view === "write" || view === "review") && (
         <div className="studio-write-layout">
           <ChapterSidebar
             chapters={chapters}
@@ -561,6 +613,9 @@ export function BookWorkspace({ bookId, locale, tab }: Props) {
             onReorder={reorderChapters}
           />
           <div className="studio-write-main">
+            {view === "review" && chapters.length > 0 ? (
+              <p className="studio-review-banner muted">{s("reviewWorkspaceBanner")}</p>
+            ) : null}
             {chapters.length === 0 ? (
               <StudioStartPanel
                 bookId={bookId}
@@ -590,11 +645,12 @@ export function BookWorkspace({ bookId, locale, tab }: Props) {
             ) : activeChapter ? (
               <ChapterEditor
                 bookId={bookId}
-                book={book}
+                book={book!}
                 chapter={activeChapter}
                 chapters={chapters}
                 canUseAi={canUseAi}
                 canEdit={canEdit}
+                workspaceMode={view === "review" ? "review" : "write"}
                 onSelectChapter={(id) => setActiveChapterId(id)}
                 onSaved={(updated) => {
                   setChapters((prev) =>
@@ -614,11 +670,20 @@ export function BookWorkspace({ bookId, locale, tab }: Props) {
 
       {view === "format" && book ? (
         <div className="studio-isolated panel">
-          <FormatPanel
+          <FormatPanel book={book} onSaved={setBook} />
+        </div>
+      ) : null}
+
+      {view === "publish" && book ? (
+        <div className="studio-isolated panel publication-stage">
+          <PublicationHub
             book={book}
-            onSaved={setBook}
-            busy={busy}
+            locale={locale}
+            canUseAi={canUseAi}
+            canEdit={canEdit}
             canExport={chapters.length > 0}
+            exportBusy={busy}
+            onBookSaved={setBook}
             onExport={(format) => void onExport(format)}
           />
         </div>
@@ -695,6 +760,9 @@ export function BookWorkspace({ bookId, locale, tab }: Props) {
           </div>
         </div>
       ) : null}
+
+        </div>
+      </div>
 
       <ImportManuscriptModal
         open={importOpen}

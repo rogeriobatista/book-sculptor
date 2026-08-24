@@ -176,3 +176,53 @@ class MarketplaceListing(SQLModel, table=True):
     published: bool = Field(default=False)
     created_at: datetime = Field(default_factory=_utcnow)
     updated_at: datetime = Field(default_factory=_utcnow)
+
+
+class SocialAccount(SQLModel, table=True):
+    __tablename__ = "social_accounts"
+    __table_args__ = (UniqueConstraint("user_id", "platform", name="uq_social_account"),)
+
+    id: str = Field(default_factory=_uuid, primary_key=True)
+    user_id: str = Field(index=True, foreign_key="users.id")
+    platform: str = Field(index=True)  # instagram | facebook | x | threads | tiktok | linkedin
+    account_label: str = Field(default="")
+    external_id: str = Field(default="")
+    access_token: str = Field(default="", sa_column=Column(Text))
+    refresh_token: str = Field(default="", sa_column=Column(Text))
+    token_expires_at: Optional[datetime] = None
+    status: str = Field(default="connected")  # connected | expired | revoked
+    meta_json: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
+
+
+class SocialPublishJob(SQLModel, table=True):
+    __tablename__ = "social_publish_jobs"
+
+    id: str = Field(default_factory=_uuid, primary_key=True)
+    book_id: str = Field(index=True, foreign_key="books.id")
+    user_id: str = Field(index=True, foreign_key="users.id")
+    platform: str = Field(index=True)
+    post_text: str = Field(default="", sa_column=Column(Text))
+    social_asset_id: Optional[str] = Field(default=None, index=True)
+    scheduled_at: Optional[datetime] = None
+    status: str = Field(default="queued")  # queued | processing | published | failed | canceled
+    external_post_id: str = Field(default="")
+    error: Optional[str] = Field(default=None, sa_column=Column(Text))
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
+
+
+class PublicationSocialAsset(SQLModel, table=True):
+    __tablename__ = "publication_social_assets"
+
+    id: str = Field(default_factory=_uuid, primary_key=True)
+    book_id: str = Field(index=True, foreign_key="books.id")
+    user_id: str = Field(index=True, foreign_key="users.id")
+    format_id: str = Field(index=True)  # instagram_post | instagram_story | x_post | facebook
+    storage_key: str = Field(default="")
+    url: str = Field(default="")
+    quote_text: str = Field(default="", sa_column=Column(Text))
+    width: int = Field(default=0)
+    height: int = Field(default=0)
+    created_at: datetime = Field(default_factory=_utcnow)

@@ -55,6 +55,19 @@ class Settings(BaseSettings):
 
     local_storage_dir: str = ".storage"
 
+    # Social OAuth (set SOCIAL_OAUTH_DEV_MODE=true for simulated connections locally)
+    social_oauth_dev_mode: bool = False
+    social_oauth_secret: str = "dev-social-oauth-secret-change-me"
+    api_public_url: str = "http://localhost:8000"
+    web_public_url: str = "http://localhost:3000"
+
+    twitter_client_id: str = ""
+    twitter_client_secret: str = ""
+    meta_app_id: str = ""
+    meta_app_secret: str = ""
+    linkedin_client_id: str = ""
+    linkedin_client_secret: str = ""
+
     @property
     def cors_origins(self) -> list[str]:
         origins = [o.strip() for o in self.api_cors_origins.split(",") if o.strip()]
