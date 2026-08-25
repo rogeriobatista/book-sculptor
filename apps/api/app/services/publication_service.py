@@ -14,6 +14,7 @@ from app.services.ai_service import (
     assert_quota,
     model_for_plan,
     settings as ai_settings,
+    usage_total_tokens,
 )
 from app.services.publication_profile import (
     PublicationProfile,
@@ -173,7 +174,7 @@ def run_publication_generate(
                 user_prompt=user_prompt,
                 temperature=0.65,
             )
-            job.tokens_used = tokens
+            job.tokens_used = usage_total_tokens(tokens)
             payload = _parse_json_payload(text)
             if not expected_keys.intersection(payload.keys()):
                 raise ValueError("Model returned unexpected JSON shape.")

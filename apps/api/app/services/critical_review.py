@@ -19,6 +19,7 @@ from app.services.ai_service import (
     LOCALE_NAMES,
     assert_quota,
     model_for_plan,
+    usage_total_tokens,
     _chat_completion,
 )
 
@@ -287,7 +288,7 @@ def _review_single_scope(
         "char_count": char_count,
         "chapters_reviewed": len(chapters) or (1 if manuscript else 0),
         "partial": False,
-        "_tokens_used": tokens,
+        "_tokens_used": usage_total_tokens(tokens),
     }
 
 
@@ -360,7 +361,7 @@ def _review_book_chunked(
                 max_tokens=REVIEW_MAX_TOKENS,
             )
             parsed = _parse_review_json(text)
-            tokens_total += tokens
+            tokens_total += usage_total_tokens(tokens)
             reviewed += 1
             chunk_findings = _normalize_findings(
                 parsed.get("findings") or [], chapter_map

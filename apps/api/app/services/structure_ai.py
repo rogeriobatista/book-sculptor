@@ -17,6 +17,7 @@ from app.services.ai_service import (
     LOCALE_NAMES,
     assert_quota,
     model_for_plan,
+    usage_total_tokens,
     _chat_completion,
 )
 
@@ -178,7 +179,7 @@ def classify_structure_headings(
 
         job.status = "ready"
         job.result_text = json.dumps(refined, ensure_ascii=False)[:8000]
-        job.tokens_used = tokens
+        job.tokens_used = usage_total_tokens(tokens)
         job.updated_at = datetime.now(timezone.utc)
         session.add(job)
         session.commit()

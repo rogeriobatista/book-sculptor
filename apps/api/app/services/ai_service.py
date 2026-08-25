@@ -36,6 +36,15 @@ def model_for_plan(plan: str) -> str:
     return settings.llm_model_pro.strip() or "gpt-4o-mini"
 
 
+def usage_total_tokens(usage: int | dict[str, int] | None) -> int:
+    """Normalize LLM usage payloads to an integer for AiJob.tokens_used."""
+    if usage is None:
+        return 0
+    if isinstance(usage, dict):
+        return int(usage.get("total_tokens") or 0)
+    return int(usage or 0)
+
+
 def provider_info() -> dict:
     live = settings.llm_live_enabled
     return {

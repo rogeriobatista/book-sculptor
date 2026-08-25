@@ -34,6 +34,18 @@ export function RichTextToolbar({ editor, disabled = false }: Props) {
     );
   }
 
+  function setLink() {
+    if (!editor) return;
+    const previous = editor.getAttributes("link").href as string | undefined;
+    const url = window.prompt(t("toolLinkPrompt"), previous || "https://");
+    if (url === null) return;
+    if (url.trim() === "") {
+      editor.chain().focus().extendMarkRange("link").unsetLink().run();
+      return;
+    }
+    editor.chain().focus().extendMarkRange("link").setLink({ href: url.trim() }).run();
+  }
+
   return (
     <div className="rte-toolbar" role="toolbar" aria-label={t("editorToolbar")}>
       <div className="rte-group" aria-label={t("rteGroupStyle")}>
@@ -41,6 +53,7 @@ export function RichTextToolbar({ editor, disabled = false }: Props) {
         {btn("I", editor.isActive("italic"), () => editor.chain().focus().toggleItalic().run(), t("toolItalic"))}
         {btn("U", editor.isActive("underline"), () => editor.chain().focus().toggleUnderline().run(), t("toolUnderline"))}
         {btn("S", editor.isActive("strike"), () => editor.chain().focus().toggleStrike().run(), t("toolStrike"))}
+        {btn("H", editor.isActive("highlight"), () => editor.chain().focus().toggleHighlight().run(), t("toolHighlight"))}
       </div>
       <span className="rte-sep" aria-hidden="true" />
       <div className="rte-group" aria-label={t("rteGroupStructure")}>
@@ -51,6 +64,7 @@ export function RichTextToolbar({ editor, disabled = false }: Props) {
         {btn("•", editor.isActive("bulletList"), () => editor.chain().focus().toggleBulletList().run(), t("toolBulletList"))}
         {btn("1.", editor.isActive("orderedList"), () => editor.chain().focus().toggleOrderedList().run(), t("toolOrderedList"))}
         {btn("❝", editor.isActive("blockquote"), () => editor.chain().focus().toggleBlockquote().run(), t("toolQuote"))}
+        {btn("🔗", editor.isActive("link"), () => setLink(), t("toolLink"))}
       </div>
       <span className="rte-sep" aria-hidden="true" />
       <div className="rte-group" aria-label={t("rteGroupAlign")}>
@@ -62,6 +76,8 @@ export function RichTextToolbar({ editor, disabled = false }: Props) {
       <div className="rte-group" aria-label={t("rteGroupHistory")}>
         {btn("↶", false, () => editor.chain().focus().undo().run(), t("toolUndo"))}
         {btn("↷", false, () => editor.chain().focus().redo().run(), t("toolRedo"))}
+        {btn("⌫", false, () =>
+          editor.chain().focus().unsetAllMarks().clearNodes().run(), t("toolClearFormat"))}
       </div>
     </div>
   );
