@@ -655,18 +655,7 @@ export function BookWorkspace({ bookId, locale, tab }: Props) {
           <TeamPanel
             bookId={bookId}
             isStudio={Boolean(isStudio)}
-            labels={{
-              title: s("teamTitle"),
-              lead: s("teamLead"),
-              email: s("teamEmail"),
-              role: s("teamRole"),
-              editor: s("roleEditor"),
-              viewer: s("roleViewer"),
-              invite: s("teamInvite"),
-              empty: s("teamEmpty"),
-              upgrade: s("teamUpgrade"),
-              remove: s("teamRemove"),
-            }}
+            bookTitle={book?.title}
           />
         </div>
       ) : null}
