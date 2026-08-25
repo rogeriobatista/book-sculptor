@@ -615,8 +615,13 @@ export function BookWorkspace({ bookId, locale, tab }: Props) {
       )}
 
       {view === "format" && book ? (
-        <div className="studio-isolated panel">
-          <FormatPanel book={book} onSaved={setBook} />
+        <div className="studio-isolated panel format-stage">
+          <FormatPanel
+            book={book}
+            canEdit={canEdit}
+            onSaved={setBook}
+            onOpenPreview={() => setView("preview")}
+          />
         </div>
       ) : null}
 

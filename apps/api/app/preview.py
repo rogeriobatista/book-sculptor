@@ -229,11 +229,15 @@ def _paginate_chapter(
             used += cost
             continue
         # first indent: primeiro parágrafo de corpo após título/seção
-        is_first_body = settings.skip_first_indent() and (
-            index == 0
-            or (index > 0 and paragraphs[index - 1].style == "section")
+        is_first_body = index == 0 or (
+            index > 0 and paragraphs[index - 1].style == "section"
         )
-        cls = ' class="first"' if is_first_body else ""
+        classes: list[str] = []
+        if settings.skip_first_indent() and is_first_body:
+            classes.append("first")
+        if settings.drop_cap and is_first_body and index == 0:
+            classes.append("dropcap")
+        cls = f' class="{" ".join(classes)}"' if classes else ""
         current.append(f"<p{cls}>{_esc(text)}</p>")
         used += cost
 
@@ -337,15 +341,24 @@ def settings_css(settings: LayoutSettings) -> dict:
         "indent_em": round(settings.first_line_indent_cm() / 0.423, 2),  # cm → em approx at 11pt
         "paragraph_gap_pt": settings.paragraph_spacing_pt(),
         "skip_first_indent": settings.skip_first_indent(),
+        "drop_cap": settings.drop_cap,
+        "running_header": settings.running_header,
     }
 
 
 def preview_payload(book: Book, settings: LayoutSettings) -> dict:
     pages = build_preview_pages(book, settings)
+    css = settings_css(settings)
+    if settings.running_header == "author":
+        css["running_header_text"] = (book.author or "").strip()
+    elif settings.running_header == "title":
+        css["running_header_text"] = (book.title or "").strip()
+    else:
+        css["running_header_text"] = ""
     return {
         "book": book_to_dict(book),
         "settings": settings.to_dict(),
-        "css": settings_css(settings),
+        "css": css,
         "pages": pages,
         "page_count": len(pages),
     }

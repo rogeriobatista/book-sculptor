@@ -322,12 +322,18 @@ def _add_chapter(
             body_flow.append(Paragraph(_esc(paragraph.text), styles["dialogue"]))
             continue
         prev_section = index > 0 and chapter.paragraphs[index - 1].style == "section"
+        is_opener = index == 0 or prev_section
         style = (
             styles["body_first"]
-            if settings.skip_first_indent() and (index == 0 or prev_section)
+            if settings.skip_first_indent() and is_opener
             else styles["body"]
         )
-        body_flow.append(Paragraph(_esc(paragraph.text), style))
+        text = _esc(paragraph.text)
+        if settings.drop_cap and index == 0 and text:
+            first, rest = text[:1], text[1:]
+            drop_size = max(settings.font_size + 14, int(settings.font_size * 2.6))
+            text = f'<font size="{drop_size}"><b>{first}</b></font>{rest}'
+        body_flow.append(Paragraph(text, style))
 
     if opening:
         # Abertura + primeiros blocos de corpo (evita página só com título)
@@ -339,25 +345,38 @@ def _add_chapter(
         story.extend(body_flow)
 
 
-def _page_number_callback(settings: LayoutSettings, skip_pages: int = 0):
+def _page_chrome_callback(
+    settings: LayoutSettings,
+    *,
+    skip_pages: int = 0,
+    header_text: str = "",
+):
     mode = settings.page_number
+    running = settings.running_header
+    header = " ".join(header_text.split())[:72]
 
     def _draw(canvas, doc) -> None:  # noqa: ANN001
         page = canvas.getPageNumber()
-        # Página de rosto (e às vezes sumário) sem número tipográfico visível
-        if mode == "sem" or page <= skip_pages:
+        # Página de rosto (e às vezes sumário) sem chrome tipográfico
+        if page <= skip_pages:
             return
         canvas.saveState()
         canvas.setFont("Times-Roman", 9)
         canvas.setFillColorRGB(0.35, 0.35, 0.35)
         width = doc.pagesize[0]
-        y = 1.15 * cm
-        # Numeração "de livro": a partir do miolo, ou absoluta
-        shown = page - skip_pages if skip_pages else page
-        if mode == "centro":
-            canvas.drawCentredString(width / 2, y, str(shown))
-        else:
-            canvas.drawRightString(width - doc.rightMargin, y, str(shown))
+        if running != "none" and header:
+            canvas.drawCentredString(
+                width / 2,
+                doc.pagesize[1] - (0.85 * cm),
+                header,
+            )
+        if mode != "sem":
+            y = 1.15 * cm
+            shown = page - skip_pages if skip_pages else page
+            if mode == "centro":
+                canvas.drawCentredString(width / 2, y, str(shown))
+            else:
+                canvas.drawRightString(width - doc.rightMargin, y, str(shown))
         canvas.restoreState()
 
     return _draw
@@ -455,9 +474,13 @@ def export_pdf(
             story.append(CondPageBreak(6 * cm))
             _add_chapter(story, chapter, styles, settings, locale=locale)
 
-    doc.build(
-        story,
-        onFirstPage=_page_number_callback(settings, skip_pages=skip_pages),
-        onLaterPages=_page_number_callback(settings, skip_pages=skip_pages),
+    header_text = ""
+    if settings.running_header == "author":
+        header_text = book.author or ""
+    elif settings.running_header == "title":
+        header_text = book.title or ""
+    chrome = _page_chrome_callback(
+        settings, skip_pages=skip_pages, header_text=header_text
     )
+    doc.build(story, onFirstPage=chrome, onLaterPages=chrome)
     return path

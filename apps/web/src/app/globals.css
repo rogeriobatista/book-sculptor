@@ -3520,6 +3520,30 @@ html[data-theme="dark"] .pricing-footer-cta {
   text-indent: 0;
 }
 
+.preview-stage p.dropcap::first-letter,
+.preview-stage[data-drop-cap="true"] p.first::first-letter,
+.kindle-page[data-drop-cap="true"] p.first::first-letter,
+.kindle-page[data-drop-cap="true"] p.dropcap::first-letter {
+  float: left;
+  font-size: 3.1em;
+  line-height: 0.85;
+  padding: 0.06em 0.08em 0 0;
+  font-weight: 650;
+}
+
+.preview-running-header {
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-align: center;
+  color: #78716c;
+  margin: 0 0 0.85rem;
+}
+
+.preview-page-num--hidden {
+  opacity: 0;
+}
+
 .preview-stage p:not(.first):not(.chapter-label):not(.ornament):not(.title-rule):not(.author):not(.dialogue) {
   text-indent: var(--preview-indent, 1.5em);
 }
@@ -6991,8 +7015,180 @@ html[data-theme="dark"] .pricing-footer-cta {
   background: var(--overlay-tint);
 }
 
+.format-panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem 1rem;
+  margin-bottom: 0.35rem;
+}
+
 .format-panel-head h2 {
   margin: 0 0 0.35rem;
+}
+
+.format-stage {
+  max-width: 72rem;
+}
+
+.format-hub {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.format-hub-layout {
+  display: grid;
+  gap: 1rem;
+  align-items: start;
+}
+
+@media (min-width: 960px) {
+  .format-hub-layout {
+    grid-template-columns: minmax(0, 1.05fr) minmax(16rem, 0.95fr);
+  }
+}
+
+.format-hub-controls {
+  display: grid;
+  gap: 0.85rem;
+  min-width: 0;
+}
+
+.format-fields-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10.5rem, 1fr));
+  gap: 0.75rem;
+}
+
+.format-preset-grid {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.format-preset-card {
+  display: grid;
+  gap: 0.25rem;
+  text-align: left;
+  padding: 0.8rem 0.9rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid color-mix(in srgb, var(--rule) 55%, transparent);
+  background: color-mix(in srgb, var(--input-bg) 75%, transparent);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.format-preset-card strong {
+  font-size: var(--text-sm);
+}
+
+.format-preset-card .muted {
+  font-size: var(--text-xs);
+  line-height: 1.4;
+}
+
+.format-preset-card[data-active="true"] {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+}
+
+.format-live-preview {
+  display: grid;
+  gap: 0.65rem;
+  position: sticky;
+  top: 0.75rem;
+}
+
+.format-live-preview__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.35rem 0.75rem;
+  font-size: var(--text-sm);
+}
+
+.format-live-preview__hint {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: 1.45;
+}
+
+.format-page-stage {
+  display: grid;
+  place-items: center;
+  padding: 0.85rem;
+  border-radius: var(--radius-md);
+  border: 1px solid color-mix(in srgb, var(--rule) 50%, transparent);
+  background:
+    radial-gradient(circle at top, color-mix(in srgb, var(--accent) 8%, transparent), transparent 55%),
+    color-mix(in srgb, var(--surface) 88%, var(--paper-deep));
+}
+
+.format-page-sheet {
+  position: relative;
+  width: min(100%, 18rem);
+  max-height: 28rem;
+  overflow: hidden;
+  background: #f7f4ef;
+  color: #1c1a17;
+  box-shadow:
+    0 1px 0 color-mix(in srgb, #000 8%, transparent),
+    0 18px 40px color-mix(in srgb, #000 28%, transparent);
+  border-radius: 0.15rem;
+}
+
+.format-page-header {
+  font-size: 0.65em;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.55;
+  margin-bottom: 0.85em;
+  text-align: center;
+}
+
+.format-page-chapter {
+  font-size: 1.15em;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  margin-bottom: 0.35em;
+}
+
+.format-page-ornament {
+  letter-spacing: 0.35em;
+  opacity: 0.55;
+  margin: 0.35em 0 0.9em;
+  font-size: 0.85em;
+}
+
+.format-page-body {
+  margin: 0 0 0.75em;
+  text-align: justify;
+  hyphens: auto;
+}
+
+.format-page-body[data-drop-cap="true"]::first-letter {
+  float: left;
+  font-size: 3.1em;
+  line-height: 0.85;
+  padding: 0.08em 0.08em 0 0;
+  font-weight: 650;
+}
+
+.format-page-number {
+  position: absolute;
+  bottom: 0.7rem;
+  left: 0;
+  right: 0;
+  font-size: 0.7em;
+  opacity: 0.55;
+  text-align: center;
+}
+
+.format-page-number[data-align="outer"] {
+  text-align: right;
+  padding-right: 0.85rem;
 }
 
 .format-section-title {

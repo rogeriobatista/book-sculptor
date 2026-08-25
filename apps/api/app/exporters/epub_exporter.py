@@ -76,11 +76,13 @@ def _chapter_html(
             paragraphs.append(f'<p class="dialogue">{_html_escape(p.text)}</p>')
             continue
         prev_section = index > 0 and chapter.paragraphs[index - 1].style == "section"
-        cls = (
-            ' class="first"'
-            if settings.skip_first_indent() and (index == 0 or prev_section)
-            else ""
-        )
+        is_opener = index == 0 or prev_section
+        classes: list[str] = []
+        if settings.skip_first_indent() and is_opener:
+            classes.append("first")
+        if settings.drop_cap and index == 0:
+            classes.append("dropcap")
+        cls = f' class="{" ".join(classes)}"' if classes else ""
         paragraphs.append(f"<p{cls}>{_html_escape(p.text)}</p>")
     return chapter.display_label, heading + "".join(paragraphs)
 
@@ -90,6 +92,17 @@ def _book_css(settings: LayoutSettings) -> str:
     lh = settings.line_height()
     indent = settings.first_line_indent_cm()
     gap = settings.paragraph_spacing_pt()
+    drop_cap_css = ""
+    if settings.drop_cap:
+        drop_cap_css = """
+    p.dropcap::first-letter {
+      float: left;
+      font-size: 3.1em;
+      line-height: 0.85;
+      padding: 0.05em 0.08em 0 0;
+      font-weight: 650;
+    }
+"""
     return f"""
     body {{
       font-family: {font};
@@ -146,6 +159,7 @@ def _book_css(settings: LayoutSettings) -> str:
       text-indent: {indent}cm;
       margin: 0 0 {gap}pt;
     }}
+    {drop_cap_css}
     .title-page {{ text-align: center; margin-top: 30%; }}
     .title-page h1 {{ font-size: 2em; font-weight: 700; }}
     .title-rule {{ color: #888; margin: 1em 0; text-indent: 0; }}

@@ -78,9 +78,17 @@ export function KindleReader({ pages, css, labels }: Props) {
         "--preview-font": String(css?.font_family || "Georgia, serif"),
         "--preview-size": String(css?.font_size || "11pt"),
         "--preview-leading": String(css?.line_height || 1.5),
+        "--preview-indent": `${css?.indent_em ?? 1.5}em`,
+        "--preview-gap": `${css?.paragraph_gap_pt ?? 0}pt`,
       }) as CSSProperties,
     [css],
   );
+
+  const runningHeader =
+    css?.running_header && css.running_header !== "none"
+      ? String(css.running_header_text || "").trim()
+      : "";
+  const showPageNumber = css?.page_number !== "sem";
 
   if (!total || !page) {
     return <p className="muted kindle-empty">{labels.empty}</p>;
@@ -143,14 +151,28 @@ export function KindleReader({ pages, css, labels }: Props) {
           disabled={safeIndex <= 0}
           onClick={() => go(safeIndex - 1)}
         />
-        <article className="preview-page kindle-page" data-page={safeIndex + 1}>
+        <article
+          className="preview-page kindle-page"
+          data-page={safeIndex + 1}
+          data-page-number={String(css?.page_number || "centro")}
+          data-drop-cap={css?.drop_cap ? "true" : "false"}
+        >
+          {runningHeader ? (
+            <header className="preview-running-header">{runningHeader}</header>
+          ) : null}
           <div
             className="preview-page-inner"
             dangerouslySetInnerHTML={{ __html: page.html }}
           />
-          <footer className="preview-page-num">
-            {safeIndex + 1} · {label}
-          </footer>
+          {showPageNumber ? (
+            <footer className="preview-page-num">
+              {safeIndex + 1}
+            </footer>
+          ) : (
+            <footer className="preview-page-num preview-page-num--hidden" aria-hidden>
+              {label}
+            </footer>
+          )}
         </article>
         <button
           type="button"
