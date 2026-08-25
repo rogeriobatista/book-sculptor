@@ -446,11 +446,11 @@ export function TeamPanel({ bookId, isStudio, bookTitle }: Props) {
         ) : null}
       </section>
 
-      <section className="settings-card team-permissions">
-        <div className="settings-card__head">
-          <h3 className="settings-card__title">{t("teamPermsTitle")}</h3>
-          <p className="settings-card__lead">{t("teamPermsLead")}</p>
-        </div>
+      <details className="team-perms-disclosure">
+        <summary>
+          <span>{t("teamPermsTitle")}</span>
+          <span className="muted">{t("teamPermsLead")}</span>
+        </summary>
         <div className="team-perm-grid">
           <article className="team-perm">
             <span className="team-role-badge team-role-badge--owner">{t("roleOwner")}</span>
@@ -465,7 +465,7 @@ export function TeamPanel({ bookId, isStudio, bookTitle }: Props) {
             <p>{t("teamPermViewer")}</p>
           </article>
         </div>
-      </section>
+      </details>
 
       {error ? <p className="team-error" role="alert">{error}</p> : null}
     </div>

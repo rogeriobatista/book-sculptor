@@ -7,7 +7,14 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 SocialPlatform = Literal["instagram", "facebook", "x", "threads", "tiktok", "linkedin"]
-StorePlatform = Literal["kdp", "apple_books", "google_play", "kobo", "direct"]
+StorePlatform = Literal[
+    "kdp",
+    "apple_books",
+    "google_play",
+    "kobo",
+    "ingram_spark",
+    "direct",
+]
 IntegrationStatus = Literal["disconnected", "connected", "coming_soon"]
 
 
@@ -69,9 +76,22 @@ def default_store_targets() -> list[StoreTarget]:
         "apple_books",
         "google_play",
         "kobo",
+        "ingram_spark",
         "direct",
     ]
     return [StoreTarget(platform=p) for p in platforms]
+
+
+def merge_store_targets(stores: list[StoreTarget]) -> list[StoreTarget]:
+    by_platform = {item.platform: item for item in stores}
+    merged: list[StoreTarget] = []
+    for default in default_store_targets():
+        merged.append(by_platform.get(default.platform, default))
+    known = {item.platform for item in merged}
+    for item in stores:
+        if item.platform not in known:
+            merged.append(item)
+    return merged
 
 
 def parse_publication_profile(raw: Any) -> PublicationProfile:
@@ -106,7 +126,7 @@ def parse_publication_profile(raw: Any) -> PublicationProfile:
         categories=str(raw.get("categories") or "").strip()[:500],
         social_posts=posts[:20],
         social_integrations=integrations or default_social_integrations(),
-        store_targets=stores or default_store_targets(),
+        store_targets=merge_store_targets(stores) if stores else default_store_targets(),
     )
     return profile
 

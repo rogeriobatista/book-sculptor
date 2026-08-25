@@ -20,6 +20,8 @@ type Props = {
   onProfileChange: (profile: PublicationProfile) => void;
 };
 
+type IntegrationsTab = "accounts" | "queue";
+
 export function SocialIntegrationsPanel({
   bookId,
   locale,
@@ -36,6 +38,8 @@ export function SocialIntegrationsPanel({
   const [draftPlatform, setDraftPlatform] = useState<string>("instagram");
   const [draftText, setDraftText] = useState("");
   const [scheduleAt, setScheduleAt] = useState("");
+  const [tab, setTab] = useState<IntegrationsTab>("accounts");
+  const [activePlatform, setActivePlatform] = useState<string>("instagram");
 
   const loadAccounts = useCallback(async () => {
     const token = await getTokenRef.current();
@@ -57,13 +61,12 @@ export function SocialIntegrationsPanel({
 
   useEffect(() => {
     const ac = new AbortController();
-    Promise.all([loadAccounts(), loadQueue()])
-      .catch((err) => {
-        if (!isAbortError(err) && !ac.signal.aborted) {
-          setAccounts([]);
-          setQueue([]);
-        }
-      });
+    Promise.all([loadAccounts(), loadQueue()]).catch((err) => {
+      if (!isAbortError(err) && !ac.signal.aborted) {
+        setAccounts([]);
+        setQueue([]);
+      }
+    });
     return () => ac.abort();
   }, [loadAccounts, loadQueue]);
 
@@ -72,11 +75,15 @@ export function SocialIntegrationsPanel({
     const oauth = params.get("social_oauth");
     const platform = params.get("platform");
     if (oauth === "connected" && platform) {
-      toast.success(t("publishOAuthConnected", { platform: t(`publishPlatform_${platform}`) }));
+      toast.success(
+        t("publishOAuthConnected", { platform: t(`publishPlatform_${platform}`) }),
+      );
       params.delete("social_oauth");
       params.delete("platform");
       const next = `${window.location.pathname}?${params.toString()}`;
       window.history.replaceState({}, "", next.endsWith("?") ? next.slice(0, -1) : next);
+      setTab("accounts");
+      setActivePlatform(platform);
       void loadAccounts();
     }
   }, [loadAccounts, t, toast]);
@@ -89,7 +96,10 @@ export function SocialIntegrationsPanel({
       const start = await clientApiFetch<{
         authorize_url?: string;
         dev_mode?: boolean;
-      }>(`/api/v1/social/oauth/${platform}/start?return_url=${encodeURIComponent(returnUrl)}`, token);
+      }>(
+        `/api/v1/social/oauth/${platform}/start?return_url=${encodeURIComponent(returnUrl)}`,
+        token,
+      );
 
       if (start.dev_mode || !start.authorize_url) {
         await clientApiFetch("/api/v1/social/accounts/dev-connect", token, {
@@ -97,7 +107,11 @@ export function SocialIntegrationsPanel({
           body: JSON.stringify({ platform }),
         });
         await loadAccounts();
-        toast.success(t("publishOAuthDevConnected", { platform: t(`publishPlatform_${platform}`) }));
+        toast.success(
+          t("publishOAuthDevConnected", {
+            platform: t(`publishPlatform_${platform}`),
+          }),
+        );
         return;
       }
       if (start.authorize_url) {
@@ -181,154 +195,230 @@ export function SocialIntegrationsPanel({
     return accounts.find((item) => item.platform === platform);
   }
 
+  const connectedCount = SOCIAL_PLATFORMS.filter(
+    (platform) => accountFor(platform)?.connected,
+  ).length;
+  const activeAccount = accountFor(activePlatform);
+  const activeIntegration = profile.social_integrations.find(
+    (item) => item.platform === activePlatform,
+  );
+  const connected = Boolean(activeAccount?.connected);
+
   return (
-    <div className="publish-section">
+    <div className="publish-section publish-section--tabbed">
       <header className="publish-section-head">
         <h2>{t("publishIntegrationsTitle")}</h2>
         <p className="muted">{t("publishIntegrationsLead")}</p>
       </header>
 
-      <ul className="publish-integration-list">
-        {SOCIAL_PLATFORMS.map((platform) => {
-          const account = accountFor(platform);
-          const integration = profile.social_integrations.find((i) => i.platform === platform);
-          const connected = Boolean(account?.connected);
-          return (
-            <li key={platform} className="publish-integration-item" data-connected={connected}>
-              <div className="publish-integration-main">
-                <strong>{t(`publishPlatform_${platform}`)}</strong>
-                <p className="muted">
+      <div className="publish-subnav" role="tablist" aria-label={t("publishIntegrationsSubnav")}>
+        <button
+          type="button"
+          role="tab"
+          className="publish-subnav-tab"
+          aria-selected={tab === "accounts"}
+          data-active={tab === "accounts"}
+          data-filled={connectedCount > 0}
+          onClick={() => setTab("accounts")}
+        >
+          {t("publishIntegrationsTab_accounts")}
+        </button>
+        <button
+          type="button"
+          role="tab"
+          className="publish-subnav-tab"
+          aria-selected={tab === "queue"}
+          data-active={tab === "queue"}
+          data-filled={queue.length > 0}
+          onClick={() => setTab("queue")}
+        >
+          {t("publishIntegrationsTab_queue")}
+          {queue.length > 0 ? (
+            <span className="publish-subnav-count">{queue.length}</span>
+          ) : null}
+        </button>
+      </div>
+
+      {tab === "accounts" ? (
+        <>
+          <div
+            className="publish-subnav publish-subnav--secondary"
+            role="tablist"
+            aria-label={t("publishAccountsSubnav")}
+          >
+            {SOCIAL_PLATFORMS.map((platform) => (
+              <button
+                key={platform}
+                type="button"
+                role="tab"
+                className="publish-subnav-tab"
+                aria-selected={activePlatform === platform}
+                data-active={activePlatform === platform}
+                data-filled={Boolean(accountFor(platform)?.connected)}
+                onClick={() => setActivePlatform(platform)}
+              >
+                {t(`publishPlatform_${platform}`)}
+              </button>
+            ))}
+          </div>
+
+          <section className="settings-card publish-tab-panel" role="tabpanel">
+            <div className="publish-field-head">
+              <div className="settings-card__head">
+                <h3 className="settings-card__title">
+                  {t(`publishPlatform_${activePlatform}`)}
+                </h3>
+                <p className="settings-card__lead">
                   {connected
-                    ? account?.account_label || t("publishOAuthConnectedShort")
+                    ? activeAccount?.account_label || t("publishOAuthConnectedShort")
                     : t("publishOAuthDisconnectedShort")}
-                  {account?.dev ? ` · ${t("publishDevMode")}` : null}
+                  {activeAccount?.dev ? ` · ${t("publishDevMode")}` : null}
                 </p>
               </div>
-              <div className="publish-integration-actions">
-                {canEdit ? (
-                  connected ? (
-                    <button
-                      type="button"
-                      className="btn btn-ghost btn-sm"
-                      disabled={busy}
-                      onClick={() => void disconnect(account!.id)}
-                    >
-                      {t("publishDisconnect")}
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      className="btn btn-ghost btn-sm"
-                      disabled={busy}
-                      onClick={() => void connectPlatform(platform)}
-                    >
-                      {t("publishConnect")}
-                    </button>
-                  )
-                ) : null}
-                <label className="publish-toggle">
-                  <input
-                    type="checkbox"
-                    checked={Boolean(integration?.auto_publish)}
-                    disabled={!canEdit || !connected || busy}
-                    onChange={(e) => void saveAutoPublish(platform, e.target.checked)}
-                  />
-                  <span>{t("publishAutoPublish")}</span>
-                </label>
-              </div>
-            </li>
-          );
-        })}
-      </ul>
-
-      <section className="publish-queue-section">
-        <h3 className="publish-subtitle">{t("publishQueueTitle")}</h3>
-        <p className="muted">{t("publishQueueLead")}</p>
-
-        {canEdit ? (
-          <div className="publish-queue-form">
-            <label className="field-block">
-              <span className="field-label">{t("publishQueuePlatform")}</span>
-              <select
-                value={draftPlatform}
-                onChange={(e) => setDraftPlatform(e.target.value)}
-                disabled={busy}
+              <span
+                className="publish-store-status-pill"
+                data-status={connected ? "published" : "not_started"}
               >
-                {SOCIAL_PLATFORMS.map((platform) => (
-                  <option key={platform} value={platform}>
-                    {t(`publishPlatform_${platform}`)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="field-block">
-              <span className="field-label">{t("publishQueueText")}</span>
-              <textarea
-                rows={3}
-                value={draftText}
-                onChange={(e) => setDraftText(e.target.value)}
-                disabled={busy}
-              />
-            </label>
-            <label className="field-block">
-              <span className="field-label">{t("publishQueueSchedule")}</span>
-              <input
-                type="datetime-local"
-                value={scheduleAt}
-                onChange={(e) => setScheduleAt(e.target.value)}
-                disabled={busy}
-              />
-            </label>
-            <div className="publish-generate-row">
-              <button
-                type="button"
-                className="btn btn-primary btn-sm"
-                disabled={busy || !draftText.trim()}
-                onClick={() => void schedulePost(true)}
-              >
-                {t("publishPostNow")}
-              </button>
-              <button
-                type="button"
-                className="btn btn-ghost btn-sm"
-                disabled={busy || !draftText.trim() || !scheduleAt}
-                onClick={() => void schedulePost(false)}
-              >
-                {t("publishSchedulePost")}
-              </button>
+                {connected
+                  ? t("publishOAuthConnectedShort")
+                  : t("publishOAuthDisconnectedShort")}
+              </span>
             </div>
-          </div>
-        ) : null}
 
-        {queue.length === 0 ? (
-          <p className="muted">{t("publishQueueEmpty")}</p>
-        ) : (
-          <ul className="publish-queue-list">
-            {queue.map((job) => (
-              <li key={job.id} className="publish-queue-item" data-status={job.status}>
-                <div>
-                  <strong>{t(`publishPlatform_${job.platform}`)}</strong>
-                  <span className="review-status-pill" data-status={job.status}>
-                    {t(`publishJobStatus_${job.status}`)}
-                  </span>
-                  <p className="muted">{job.post_text}</p>
-                  {job.error ? <p className="publish-queue-error">{job.error}</p> : null}
-                </div>
-                {canEdit && job.status === "failed" ? (
+            <div className="publish-integration-actions publish-integration-actions--panel">
+              {canEdit ? (
+                connected ? (
                   <button
                     type="button"
-                    className="btn btn-ghost btn-sm"
+                    className="btn btn-ghost btn-compact"
                     disabled={busy}
-                    onClick={() => void retryJob(job.id)}
+                    onClick={() => void disconnect(activeAccount!.id)}
                   >
-                    {t("publishRetry")}
+                    {t("publishDisconnect")}
                   </button>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+                ) : (
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-compact"
+                    disabled={busy}
+                    onClick={() => void connectPlatform(activePlatform)}
+                  >
+                    {t("publishConnect")}
+                  </button>
+                )
+              ) : null}
+              <label className="publish-toggle">
+                <input
+                  type="checkbox"
+                  checked={Boolean(activeIntegration?.auto_publish)}
+                  disabled={!canEdit || !connected || busy}
+                  onChange={(e) => void saveAutoPublish(activePlatform, e.target.checked)}
+                />
+                <span>{t("publishAutoPublish")}</span>
+              </label>
+            </div>
+
+            <p className="muted publish-field-hint">
+              {t("publishAccountsConnectedHint", {
+                connected: connectedCount,
+                total: SOCIAL_PLATFORMS.length,
+              })}
+            </p>
+          </section>
+        </>
+      ) : (
+        <section className="settings-card publish-tab-panel" role="tabpanel">
+          <div className="settings-card__head">
+            <h3 className="settings-card__title">{t("publishQueueTitle")}</h3>
+            <p className="settings-card__lead">{t("publishQueueLead")}</p>
+          </div>
+
+          {canEdit ? (
+            <div className="publish-queue-form">
+              <label className="team-field">
+                <span>{t("publishQueuePlatform")}</span>
+                <select
+                  value={draftPlatform}
+                  onChange={(e) => setDraftPlatform(e.target.value)}
+                  disabled={busy}
+                >
+                  {SOCIAL_PLATFORMS.map((platform) => (
+                    <option key={platform} value={platform}>
+                      {t(`publishPlatform_${platform}`)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="team-field">
+                <span>{t("publishQueueText")}</span>
+                <textarea
+                  rows={4}
+                  value={draftText}
+                  onChange={(e) => setDraftText(e.target.value)}
+                  disabled={busy}
+                />
+              </label>
+              <label className="team-field">
+                <span>{t("publishQueueSchedule")}</span>
+                <input
+                  type="datetime-local"
+                  value={scheduleAt}
+                  onChange={(e) => setScheduleAt(e.target.value)}
+                  disabled={busy}
+                />
+              </label>
+              <div className="publish-generate-row">
+                <button
+                  type="button"
+                  className="btn btn-primary btn-compact"
+                  disabled={busy || !draftText.trim()}
+                  onClick={() => void schedulePost(true)}
+                >
+                  {t("publishPostNow")}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-compact"
+                  disabled={busy || !draftText.trim() || !scheduleAt}
+                  onClick={() => void schedulePost(false)}
+                >
+                  {t("publishSchedulePost")}
+                </button>
+              </div>
+            </div>
+          ) : null}
+
+          <h4 className="publish-queue-list-title">{t("publishQueueHistory")}</h4>
+          {queue.length === 0 ? (
+            <p className="muted">{t("publishQueueEmpty")}</p>
+          ) : (
+            <ul className="publish-queue-list">
+              {queue.map((job) => (
+                <li key={job.id} className="publish-queue-item" data-status={job.status}>
+                  <div>
+                    <strong>{t(`publishPlatform_${job.platform}`)}</strong>
+                    <span className="review-status-pill" data-status={job.status}>
+                      {t(`publishJobStatus_${job.status}`)}
+                    </span>
+                    <p className="muted">{job.post_text}</p>
+                    {job.error ? <p className="publish-queue-error">{job.error}</p> : null}
+                  </div>
+                  {canEdit && job.status === "failed" ? (
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-compact"
+                      disabled={busy}
+                      onClick={() => void retryJob(job.id)}
+                    >
+                      {t("publishRetry")}
+                    </button>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
     </div>
   );
 }

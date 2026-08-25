@@ -39,6 +39,7 @@ export function PublicationExportsPanel({
         signal ? { signal } : {},
       );
       if (!signal?.aborted) setExports(rows);
+      return rows;
     },
     [bookId, getTokenRef],
   );
@@ -56,6 +57,16 @@ export function PublicationExportsPanel({
     return () => ac.abort();
   }, [load]);
 
+  // Refresh while exports are in flight or parent reports busy.
+  useEffect(() => {
+    const pending = busy || exports.some((job) => job.status === "queued" || job.status === "processing");
+    if (!pending) return;
+    const id = window.setInterval(() => {
+      void load().catch(() => undefined);
+    }, 2500);
+    return () => window.clearInterval(id);
+  }, [busy, exports, load]);
+
   async function downloadExport(job: ExportJob) {
     if (!job.download_url || job.status !== "ready") return;
     const token = await getTokenRef.current();
@@ -67,6 +78,8 @@ export function PublicationExportsPanel({
     }
   }
 
+  const latestReady = exports.find((job) => job.status === "ready");
+
   return (
     <div className="publish-section">
       <header className="publish-section-head">
@@ -74,42 +87,74 @@ export function PublicationExportsPanel({
         <p className="muted">{t("publishExportsLead")}</p>
       </header>
 
-      <ExportActions
-        variant="cards"
-        busy={busy}
-        disabled={!canExport}
-        onExport={onExport}
-      />
+      <section className="settings-card">
+        <div className="settings-card__head">
+          <h3 className="settings-card__title">{t("publishExportCreateTitle")}</h3>
+          <p className="settings-card__lead">{t("publishExportCreateLead")}</p>
+        </div>
+        <ExportActions
+          variant="cards"
+          busy={busy}
+          disabled={!canExport}
+          onExport={onExport}
+        />
+        {!canExport ? <p className="muted publish-field-hint">{t("publishExportUpgrade")}</p> : null}
+      </section>
 
-      <h3 className="publish-subtitle">{t("publishExportHistory")}</h3>
-      {loading ? (
-        <p className="muted">{t("publishLoading")}</p>
-      ) : exports.length === 0 ? (
-        <p className="muted">{t("publishExportEmpty")}</p>
-      ) : (
-        <ul className="publish-export-list">
-          {exports.map((job) => (
-            <li key={job.id} className="publish-export-item" data-status={job.status}>
-              <div>
-                <strong>{job.format.toUpperCase()}</strong>
-                <span className="muted"> · {job.status}</span>
-                {job.watermark ? (
-                  <span className="publish-watermark-badge">{t("publishWatermark")}</span>
+      <section className="settings-card">
+        <div className="publish-field-head">
+          <div className="settings-card__head">
+            <h3 className="settings-card__title">{t("publishExportHistory")}</h3>
+            <p className="settings-card__lead">{t("publishExportHistoryLead")}</p>
+          </div>
+          <button
+            type="button"
+            className="btn btn-ghost btn-compact"
+            onClick={() => void load()}
+          >
+            {t("publishExportRefresh")}
+          </button>
+        </div>
+
+        {loading ? (
+          <p className="muted">{t("publishLoading")}</p>
+        ) : exports.length === 0 ? (
+          <p className="muted">{t("publishExportEmpty")}</p>
+        ) : (
+          <ul className="publish-export-list">
+            {exports.map((job) => (
+              <li key={job.id} className="publish-export-item" data-status={job.status}>
+                <div className="publish-export-copy">
+                  <div className="publish-export-title-row">
+                    <strong>{job.format.toUpperCase()}</strong>
+                    <span className="publish-export-status" data-status={job.status}>
+                      {["queued", "processing", "ready", "failed"].includes(job.status)
+                        ? t(`publishExportStatus_${job.status}` as "publishExportStatus_ready")
+                        : job.status}
+                    </span>
+                    {job.watermark ? (
+                      <span className="publish-watermark-badge">{t("publishWatermark")}</span>
+                    ) : null}
+                    {latestReady?.id === job.id ? (
+                      <span className="publish-export-latest">{t("publishExportLatest")}</span>
+                    ) : null}
+                  </div>
+                  {job.error ? <p className="muted">{job.error}</p> : null}
+                </div>
+                {job.status === "ready" && job.download_url ? (
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-compact"
+                    onClick={() => void downloadExport(job)}
+                  >
+                    {t("publishDownload")}
+                  </button>
                 ) : null}
-              </div>
-              {job.status === "ready" && job.download_url ? (
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-sm"
-                  onClick={() => void downloadExport(job)}
-                >
-                  {t("publishDownload")}
-                </button>
-              ) : null}
-            </li>
-          ))}
-        </ul>
-      )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
     </div>
   );
 }

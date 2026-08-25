@@ -9,12 +9,13 @@ import { useToast } from "@/components/ToastProvider";
 
 type Props = {
   book: Book;
+  canEdit?: boolean;
   onSaved: (book: Book) => void;
 };
 
 const STYLES = ["literary", "bold", "minimal", "fantasy"] as const;
 
-export function CoverPanel({ book, onSaved }: Props) {
+export function CoverPanel({ book, canEdit = true, onSaved }: Props) {
   const { getToken } = useAppAuth();
   const coverSrc = useAuthenticatedMediaUrl(book.cover_url);
   const toast = useToast();
@@ -59,6 +60,7 @@ export function CoverPanel({ book, onSaved }: Props) {
 
   async function onGenerate(event: FormEvent) {
     event.preventDefault();
+    if (!canEdit) return;
     setGenerating(true);
     const loadingId = toast.loading(t("coverGenerating"));
     try {
@@ -137,6 +139,8 @@ export function CoverPanel({ book, onSaved }: Props) {
         </div>
 
         <div className="cover-actions">
+          {!canEdit ? <p className="muted">{t("coverReadOnly")}</p> : null}
+          <p className="muted cover-hint">{t("coverFormatTip")}</p>
           <div className="cover-upload">
             <input
               ref={fileRef}
@@ -148,7 +152,7 @@ export function CoverPanel({ book, onSaved }: Props) {
             <button
               type="button"
               className="btn"
-              disabled={busy}
+              disabled={busy || !canEdit}
               onClick={() => fileRef.current?.click()}
             >
               {uploading ? t("coverUploading") : t("coverUpload")}
@@ -165,7 +169,7 @@ export function CoverPanel({ book, onSaved }: Props) {
                 rows={3}
                 maxLength={2000}
                 placeholder={t("coverPromptPlaceholder")}
-                disabled={busy}
+                disabled={busy || !canEdit}
               />
             </label>
             <label>
@@ -173,7 +177,7 @@ export function CoverPanel({ book, onSaved }: Props) {
               <select
                 value={style}
                 onChange={(e) => setStyle(e.target.value as (typeof STYLES)[number])}
-                disabled={busy}
+                disabled={busy || !canEdit}
               >
                 {STYLES.map((id) => (
                   <option key={id} value={id}>
@@ -182,7 +186,7 @@ export function CoverPanel({ book, onSaved }: Props) {
                 ))}
               </select>
             </label>
-            <button type="submit" className="btn btn-primary" disabled={busy}>
+            <button type="submit" className="btn btn-primary" disabled={busy || !canEdit}>
               {generating ? t("coverGenerating") : t("coverGenerate")}
             </button>
             <p className="muted cover-hint">{t("coverAiHint")}</p>
@@ -192,7 +196,7 @@ export function CoverPanel({ book, onSaved }: Props) {
             <button
               type="button"
               className="btn btn-ghost"
-              disabled={busy}
+              disabled={busy || !canEdit}
               onClick={() => void onRemove()}
             >
               {t("coverRemove")}
