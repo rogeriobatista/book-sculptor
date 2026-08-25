@@ -8,6 +8,11 @@ from app.i18n_labels import SPECIAL_SECTION_KINDS
 from app.layout import LayoutSettings
 from app.models import Book, Chapter
 from app.storage import get_bytes
+from app.typography_flow import (
+    first_drop_cap_index,
+    is_section_paragraph,
+    previous_breaks_indent,
+)
 
 
 def _html_escape(text: str) -> str:
@@ -67,21 +72,23 @@ def _chapter_html(
             heading += '<div class="open-spacer"></div>'
 
     paragraphs = []
+    drop_at = first_drop_cap_index(chapter.paragraphs) if settings.drop_cap else None
     for index, p in enumerate(chapter.paragraphs):
-        if p.style == "section":
+        if is_section_paragraph(p.style, p.text):
             paragraphs.append('<p class="section-rule">. . .</p>')
             paragraphs.append(f'<h2 class="section-title">{_html_escape(p.text)}</h2>')
             continue
         if p.style == "dialogue":
             paragraphs.append(f'<p class="dialogue">{_html_escape(p.text)}</p>')
             continue
-        prev_section = index > 0 and chapter.paragraphs[index - 1].style == "section"
-        is_opener = index == 0 or prev_section
+        is_opener = previous_breaks_indent(chapter.paragraphs, index)
         classes: list[str] = []
         if settings.skip_first_indent() and is_opener:
             classes.append("first")
-        if settings.drop_cap and index == 0:
+        if drop_at is not None and index == drop_at:
             classes.append("dropcap")
+            if "first" not in classes:
+                classes.append("first")
         cls = f' class="{" ".join(classes)}"' if classes else ""
         paragraphs.append(f"<p{cls}>{_html_escape(p.text)}</p>")
     return chapter.display_label, heading + "".join(paragraphs)
@@ -95,11 +102,15 @@ def _book_css(settings: LayoutSettings) -> str:
     drop_cap_css = ""
     if settings.drop_cap:
         drop_cap_css = """
+    p.dropcap {
+      text-indent: 0 !important;
+      display: flow-root;
+    }
     p.dropcap::first-letter {
       float: left;
-      font-size: 3.1em;
-      line-height: 0.85;
-      padding: 0.05em 0.08em 0 0;
+      font-size: 3.05em;
+      line-height: 0.78;
+      padding: 0.04em 0.1em 0 0;
       font-weight: 650;
     }
 """

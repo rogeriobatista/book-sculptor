@@ -3,6 +3,11 @@ from __future__ import annotations
 from app.i18n_labels import SPECIAL_SECTION_KINDS
 from app.layout import LayoutSettings
 from app.models import Book, Chapter
+from app.typography_flow import (
+    first_drop_cap_index,
+    is_section_paragraph,
+    previous_breaks_indent,
+)
 
 
 def chapter_to_dict(chapter: Chapter, index: int) -> dict:
@@ -210,6 +215,8 @@ def _paginate_chapter(
     used = 200 if has_open else 0
     min_blocks = 1 if has_open else 0
 
+    drop_at = first_drop_cap_index(paragraphs) if settings.drop_cap else None
+
     for index, para in enumerate(paragraphs):
         text = para.text
         cost = len(text) + 20
@@ -219,9 +226,9 @@ def _paginate_chapter(
             used = 0
             budget = chars_per_page
             min_blocks = 0
-        if para.style == "section":
+        if is_section_paragraph(para.style, text):
             current.append('<p class="section-rule">. . .</p>')
-            current.append(f'<h2 class="section-title">{_esc(para.text)}</h2>')
+            current.append(f'<h2 class="section-title">{_esc(text)}</h2>')
             used += 60
             continue
         if para.style == "dialogue":
@@ -229,14 +236,14 @@ def _paginate_chapter(
             used += cost
             continue
         # first indent: primeiro parágrafo de corpo após título/seção
-        is_first_body = index == 0 or (
-            index > 0 and paragraphs[index - 1].style == "section"
-        )
+        is_first_body = previous_breaks_indent(paragraphs, index)
         classes: list[str] = []
         if settings.skip_first_indent() and is_first_body:
             classes.append("first")
-        if settings.drop_cap and is_first_body and index == 0:
+        if drop_at is not None and index == drop_at:
             classes.append("dropcap")
+            if "first" not in classes:
+                classes.append("first")
         cls = f' class="{" ".join(classes)}"' if classes else ""
         current.append(f"<p{cls}>{_esc(text)}</p>")
         used += cost

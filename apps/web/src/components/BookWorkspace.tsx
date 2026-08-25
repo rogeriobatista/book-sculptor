@@ -31,7 +31,7 @@ import {
 import { Link } from "@/i18n/navigation";
 import { useStableAuth } from "@/lib/use-app-auth";
 import { useAiQuota } from "@/lib/use-ai-quota";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 
 type Props = {
@@ -79,6 +79,8 @@ export function BookWorkspace({ bookId, locale, tab }: Props) {
   const [previewCss, setPreviewCss] = useState<Record<string, string | number> | null>(
     null,
   );
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const previewAbort = useRef<AbortController | null>(null);
   const loadGen = useRef(0);
   const exportAbort = useRef<AbortController | null>(null);
 
@@ -142,41 +144,59 @@ export function BookWorkspace({ bookId, locale, tab }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bookId, isLoaded, isSignedIn]);
 
-  useEffect(() => {
-    if (view !== "preview" || !isLoaded || !isSignedIn) return;
-    const ac = new AbortController();
-    const loadingId = toast.loading(s("notifyPreviewLoading"));
-    (async () => {
+  const loadPreview = useCallback(
+    async (opts?: { quiet?: boolean }) => {
+      previewAbort.current?.abort();
+      const ac = new AbortController();
+      previewAbort.current = ac;
+      setPreviewLoading(true);
+      const loadingId = opts?.quiet ? null : toast.loading(s("notifyPreviewLoading"));
       try {
         const token = await getTokenRef.current();
         if (!token) throw new Error("Not signed in.");
         const payload = await clientApiFetch<{
-          pages: { type?: string; title?: string; html: string }[];
+          pages: PreviewPage[];
           css?: Record<string, string | number>;
         }>(`/api/v1/books/${bookId}/preview`, token, { signal: ac.signal });
         if (ac.signal.aborted) {
-          toast.dismiss(loadingId);
+          if (loadingId) toast.dismiss(loadingId);
           return;
         }
         setPreviewCss(payload.css || null);
         setPreviewPages(payload.pages || []);
-        toast.dismiss(loadingId);
+        if (loadingId) toast.dismiss(loadingId);
       } catch (err) {
         if (isAbortError(err) || ac.signal.aborted) {
-          toast.dismiss(loadingId);
+          if (loadingId) toast.dismiss(loadingId);
           return;
         }
         setPreviewPages([]);
-        toast.update(loadingId, {
-          tone: "error",
-          title: s("notifyPreviewFailed"),
-          description: err instanceof Error ? err.message : undefined,
-        });
+        if (loadingId) {
+          toast.update(loadingId, {
+            tone: "error",
+            title: s("notifyPreviewFailed"),
+            description: err instanceof Error ? err.message : undefined,
+          });
+        } else {
+          toast.error(
+            s("notifyPreviewFailed"),
+            err instanceof Error ? err.message : undefined,
+          );
+        }
+      } finally {
+        if (!ac.signal.aborted) setPreviewLoading(false);
       }
-    })();
+    },
+    [bookId, getTokenRef, s, toast],
+  );
+
+  useEffect(() => {
+    if (view !== "preview" || !isLoaded || !isSignedIn) return;
+    void loadPreview();
     return () => {
-      ac.abort();
+      previewAbort.current?.abort();
     };
+    // Intentionally omit loadPreview identity churn from toast/i18n.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bookId, view, isLoaded, isSignedIn]);
 
@@ -620,7 +640,7 @@ export function BookWorkspace({ bookId, locale, tab }: Props) {
             book={book}
             canEdit={canEdit}
             onSaved={setBook}
-            onOpenPreview={() => setView("preview")}
+            onOpenPreview={() => goView("preview")}
           />
         </div>
       ) : null}
@@ -645,6 +665,10 @@ export function BookWorkspace({ bookId, locale, tab }: Props) {
           <KindleReader
             pages={previewPages}
             css={previewCss}
+            bookTitle={book?.title}
+            loading={previewLoading}
+            onOpenFormat={() => goView("format")}
+            onRefresh={() => void loadPreview({ quiet: true })}
             labels={{
               prev: s("previewPrev"),
               next: s("previewNext"),

@@ -22,6 +22,11 @@ from app.i18n_labels import SPECIAL_SECTION_KINDS
 from app.layout import LayoutSettings
 from app.models import Book, Chapter
 from app.storage import get_bytes
+from app.typography_flow import (
+    first_drop_cap_index,
+    is_section_paragraph,
+    previous_breaks_indent,
+)
 
 
 def _register_fonts() -> dict[str, str]:
@@ -310,8 +315,9 @@ def _add_chapter(
             opening.append(Spacer(1, 16 if is_front else 10))
 
     body_flow: list = []
+    drop_at = first_drop_cap_index(chapter.paragraphs) if settings.drop_cap else None
     for index, paragraph in enumerate(chapter.paragraphs):
-        if paragraph.style == "section":
+        if is_section_paragraph(paragraph.style, paragraph.text):
             section_bits: list = [Spacer(1, 0.35 * cm)]
             if literary:
                 section_bits.append(Paragraph(". . .", styles["section_rule"]))
@@ -321,18 +327,18 @@ def _add_chapter(
         if paragraph.style == "dialogue":
             body_flow.append(Paragraph(_esc(paragraph.text), styles["dialogue"]))
             continue
-        prev_section = index > 0 and chapter.paragraphs[index - 1].style == "section"
-        is_opener = index == 0 or prev_section
+        is_opener = previous_breaks_indent(chapter.paragraphs, index)
         style = (
             styles["body_first"]
             if settings.skip_first_indent() and is_opener
             else styles["body"]
         )
         text = _esc(paragraph.text)
-        if settings.drop_cap and index == 0 and text:
+        if drop_at is not None and index == drop_at and text:
             first, rest = text[:1], text[1:]
             drop_size = max(settings.font_size + 14, int(settings.font_size * 2.6))
             text = f'<font size="{drop_size}"><b>{first}</b></font>{rest}'
+            style = styles["body_first"]
         body_flow.append(Paragraph(text, style))
 
     if opening:
