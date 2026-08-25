@@ -2,6 +2,8 @@
 
 import { useTranslations } from "next-intl";
 import type { RefObject } from "react";
+import { AiQuotaMeter } from "@/components/AiQuotaMeter";
+import type { AiQuota } from "@/lib/use-ai-quota";
 
 type AiAction =
   | "generate"
@@ -30,6 +32,7 @@ type Props = {
   canUseAi: boolean;
   canEdit: boolean;
   styleConfigured?: boolean;
+  quota?: AiQuota;
   chatEndRef: RefObject<HTMLDivElement | null>;
   onPromptChange: (value: string) => void;
   onRun: (action: AiAction, prompt?: string) => void;
@@ -44,6 +47,7 @@ export function EditorAiPanel({
   canUseAi,
   canEdit,
   styleConfigured = false,
+  quota,
   chatEndRef,
   onPromptChange,
   onRun,
@@ -51,8 +55,13 @@ export function EditorAiPanel({
 }: Props) {
   const t = useTranslations("studio");
 
+  const quotaBlocked = Boolean(quota?.exceeded);
+  const actionsDisabled = aiBusy || !canUseAi || !canEdit || quotaBlocked;
+
   return (
     <div className="editor-ai-panel">
+      {quota ? <AiQuotaMeter quota={quota} compact /> : null}
+
       {!canEdit ? (
         <p className="editor-tools-notice">{t("readOnlyBadge")}</p>
       ) : null}
@@ -63,7 +72,7 @@ export function EditorAiPanel({
             key={chip.action}
             type="button"
             className="ai-chip"
-            disabled={aiBusy || !canUseAi || !canEdit}
+            disabled={actionsDisabled}
             onClick={() => onRun(chip.action, chip.prompt)}
           >
             {chip.label}
@@ -75,7 +84,7 @@ export function EditorAiPanel({
         <p className="editor-tools-notice">{t("upgradeAi")}</p>
       ) : (
         <p className="muted editor-tools-tip">
-          {styleConfigured ? t("bookStyleActiveHint") : t("aiLead")}
+          {styleConfigured ? t("bookStyleActiveHint") : t("aiStreamingHint")}
         </p>
       )}
 
@@ -107,14 +116,14 @@ export function EditorAiPanel({
           onChange={(e) => onPromptChange(e.target.value)}
           placeholder={t("promptPlaceholder")}
           rows={3}
-          disabled={aiBusy || !canUseAi || !canEdit}
+          disabled={actionsDisabled}
         />
       </label>
       <div className="editor-tools-actions">
         <button
           type="button"
           className="btn btn-primary"
-          disabled={aiBusy || !canUseAi || !canEdit || !aiPrompt.trim()}
+          disabled={actionsDisabled || !aiPrompt.trim()}
           onClick={() => onRun("generate")}
         >
           {aiBusy ? t("writing") : t("writeFromPrompt")}

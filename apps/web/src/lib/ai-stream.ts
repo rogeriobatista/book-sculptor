@@ -10,10 +10,30 @@ function apiBaseUrl(): string {
   return raw.replace(/\/$/, "");
 }
 
+export type AiQuotaSnapshot = {
+  plan: string;
+  used: number;
+  limit: number;
+  remaining: number;
+  percent_used: number;
+  allowed: boolean;
+  resets_at: string;
+  warning: boolean;
+  exceeded: boolean;
+};
+
 export type AiStreamEvent =
-  | { type: "start"; job_id: string }
+  | { type: "start"; job_id: string; quota?: AiQuotaSnapshot }
   | { type: "delta"; text: string }
-  | { type: "done"; job_id: string; tokens_used: number; text: string }
+  | {
+      type: "done";
+      job_id: string;
+      tokens_used: number;
+      input_tokens?: number;
+      output_tokens?: number;
+      text: string;
+      quota?: AiQuotaSnapshot;
+    }
   | { type: "error"; job_id?: string; error: string };
 
 export async function streamAiChapter(

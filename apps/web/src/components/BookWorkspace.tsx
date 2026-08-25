@@ -1,6 +1,6 @@
 "use client";
 
-import { BookStylePanel } from "@/components/BookStylePanel";
+import { BookSettingsPanel } from "@/components/BookSettingsPanel";
 import { ChapterEditor } from "@/components/ChapterEditor";
 import { ChapterSidebar } from "@/components/ChapterSidebar";
 import { ExportActions, type ExportFormat } from "@/components/ExportActions";
@@ -30,7 +30,8 @@ import {
 } from "@/lib/chapter-structure";
 import { Link } from "@/i18n/navigation";
 import { useStableAuth } from "@/lib/use-app-auth";
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { useAiQuota } from "@/lib/use-ai-quota";
+import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 
 type Props = {
@@ -82,6 +83,7 @@ export function BookWorkspace({ bookId, locale, tab }: Props) {
   const exportAbort = useRef<AbortController | null>(null);
 
   const canUseAi = Boolean(me && me.plan !== "free");
+  const { quota: aiQuota, applyQuota } = useAiQuota(canUseAi);
   const isStudio = me?.plan === "studio";
   const canEdit = book?.my_role !== "viewer";
   const activeChapter =
@@ -434,36 +436,6 @@ export function BookWorkspace({ bookId, locale, tab }: Props) {
     }
   }
 
-  async function saveSettings(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!book) return;
-    const form = new FormData(event.currentTarget);
-    setBusy(true);
-    const loadingId = toast.loading(s("notifySaving"));
-    try {
-      const token = await getToken();
-      const updated = await clientApiFetch<Book>(`/api/v1/books/${bookId}`, token, {
-        method: "PATCH",
-        body: JSON.stringify({
-          title: String(form.get("title") || book.title),
-          author: String(form.get("author") || ""),
-          locale: String(form.get("locale") || book.locale),
-          settings: book.settings || {},
-        }),
-      });
-      setBook(updated);
-      toast.update(loadingId, { tone: "success", title: s("notifySaved") });
-    } catch (err) {
-      toast.update(loadingId, {
-        tone: "error",
-        title: s("notifySaveFailed"),
-        description: err instanceof Error ? err.message : undefined,
-      });
-    } finally {
-      setBusy(false);
-    }
-  }
-
   const navGroups: {
     id: string;
     label: string;
@@ -621,6 +593,8 @@ export function BookWorkspace({ bookId, locale, tab }: Props) {
                 chapter={activeChapter}
                 chapters={chapters}
                 canUseAi={canUseAi}
+                aiQuota={aiQuota}
+                onQuotaChange={applyQuota}
                 canEdit={canEdit}
                 workspaceMode={view === "review" ? "review" : "write"}
                 onSelectChapter={(id) => setActiveChapterId(id)}
@@ -698,39 +672,12 @@ export function BookWorkspace({ bookId, locale, tab }: Props) {
       ) : null}
 
       {view === "settings" && book ? (
-        <div className="studio-settings-layout">
-          <div className="studio-isolated panel">
-            <form className="form-grid" onSubmit={saveSettings}>
-              <h2>{t("settings")}</h2>
-              <label>
-                {t("title")}
-                <input name="title" defaultValue={book.title} />
-              </label>
-              <label>
-                {t("author")}
-                <input name="author" defaultValue={book.author} />
-              </label>
-              <label>
-                {t("locale")}
-                <select name="locale" defaultValue={book.locale}>
-                  <option value="en">English</option>
-                  <option value="pt-BR">Português (Brasil)</option>
-                  <option value="es">Español</option>
-                </select>
-              </label>
-              <button type="submit" className="btn btn-primary" disabled={busy}>
-                {common("save")}
-              </button>
-            </form>
-          </div>
-          <div className="studio-isolated panel">
-            <BookStylePanel
-              book={book}
-              canEdit={canEdit}
-              onSaved={(updated) => setBook(updated)}
-            />
-          </div>
-        </div>
+        <BookSettingsPanel
+          book={book}
+          canEdit={canEdit}
+          canUseAi={canUseAi}
+          onSaved={setBook}
+        />
       ) : null}
 
         </div>

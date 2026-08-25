@@ -12,12 +12,10 @@ from app.access import assert_can_edit, get_owned_book
 from app.auth import CurrentUser
 from app.db import get_session
 from app.services.ai_service import (
-    PLAN_MONTHLY_TOKENS,
     assert_ai_allowed,
     iter_chapter_ai_stream,
     provider_info,
     run_chapter_ai,
-    tokens_used_this_month,
 )
 from app.services.critical_review import (
     get_latest_critical_review,
@@ -59,16 +57,36 @@ class AiRequest(BaseModel):
 def ai_quota(
     user: CurrentUser,
     session: Session = Depends(get_session),
+    book_id: Optional[str] = None,
+    dashboard: bool = False,
 ) -> dict:
-    used = tokens_used_this_month(session, user.id)
-    limit = PLAN_MONTHLY_TOKENS.get(user.plan, 0)
-    return {
-        "plan": user.plan,
-        "used": used,
-        "limit": limit,
-        "allowed": user.plan != "free",
-        "provider": provider_info(),
-    }
+    from app.services.ai_service import get_quota, provider_info
+
+    if dashboard:
+        from app.services.ai_usage_service import get_usage_dashboard
+
+        if book_id:
+            get_owned_book(session, user, book_id)
+        payload = get_usage_dashboard(session, user, book_id=book_id)
+        payload["provider"] = provider_info()
+        return payload
+
+    payload = get_quota(session, user)
+    payload["provider"] = provider_info()
+    return payload
+
+
+@router.get("/usage")
+def ai_usage(
+    user: CurrentUser,
+    session: Session = Depends(get_session),
+    book_id: Optional[str] = None,
+) -> dict:
+    from app.services.ai_usage_service import get_usage_dashboard
+
+    if book_id:
+        get_owned_book(session, user, book_id)
+    return get_usage_dashboard(session, user, book_id=book_id)
 
 
 @router.post("/chapter")

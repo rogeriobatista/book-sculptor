@@ -3,50 +3,29 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 import httpx
-from fastapi import HTTPException
-from sqlmodel import Session, select
+from sqlmodel import Session
 
 from app.config import get_settings
 from app.db_models import AiJob, Book, User
 from app.i18n_labels import normalize_locale
+from app.services.book_context import build_writing_context
 from app.services.book_style import style_profile_from_book
-from app.services.chapter_context import prior_chapters_context
+from app.services.token_budget import (
+    PLAN_MONTHLY_TOKENS,
+    assert_ai_allowed,
+    assert_quota,
+    estimate_tokens,
+    quota_info,
+    tokens_used_this_month,
+)
 
 settings = get_settings()
-
-PLAN_MONTHLY_TOKENS = {
-    "free": 0,
-    "pro": 200_000,
-    "studio": 1_000_000,
-}
 
 LOCALE_NAMES = {"en": "English", "pt-BR": "Brazilian Portuguese", "es": "Spanish"}
 
 
-def assert_ai_allowed(user: User) -> None:
-    if user.plan == "free":
-        raise HTTPException(402, "AI is available on Pro and Studio plans.")
-
-
-def tokens_used_this_month(session: Session, user_id: str) -> int:
-    jobs = session.exec(select(AiJob).where(AiJob.user_id == user_id)).all()
-    now = datetime.now(timezone.utc)
-    total = 0
-    for job in jobs:
-        created = job.created_at
-        if created.tzinfo is None:
-            created = created.replace(tzinfo=timezone.utc)
-        if created.year == now.year and created.month == now.month:
-            total += job.tokens_used or 0
-    return total
-
-
-def assert_quota(session: Session, user: User, estimate: int = 1000) -> None:
-    assert_ai_allowed(user)
-    limit = PLAN_MONTHLY_TOKENS.get(user.plan, 0)
-    used = tokens_used_this_month(session, user.id)
-    if used + estimate > limit:
-        raise HTTPException(402, "Monthly AI quota exceeded for your plan.")
+def get_quota(session: Session, user: User) -> dict:
+    return quota_info(session, user)
 
 
 def model_for_plan(plan: str) -> str:
@@ -79,7 +58,6 @@ def run_chapter_ai(
     prompt: str,
     selection: str = "",
 ) -> AiJob:
-    assert_quota(session, user)
     locale = normalize_locale(book.locale)
     language = LOCALE_NAMES.get(locale, "English")
     system, user_prompt = _prompts_for_action(
@@ -91,11 +69,16 @@ def run_chapter_ai(
         selection=selection,
         language=language,
     )
+    model = model_for_plan(user.plan)
+    assert_quota(session, user, prompt_texts=(system, user_prompt))
 
     job = AiJob(
         book_id=book.id,
         user_id=user.id,
         chapter_id=chapter_id,
+        job_type="chapter",
+        action=action,
+        model=model,
         status="processing",
         prompt=user_prompt,
         locale=locale,
@@ -108,8 +91,12 @@ def run_chapter_ai(
 
     if not settings.llm_live_enabled:
         result = _offline_result(action, prompt, selection, language, book.title)
+        est_in = estimate_tokens(system, user_prompt)
+        est_out = max(1, len(result.split()))
         job.result_text = result
-        job.tokens_used = max(1, len(result.split()))
+        job.input_tokens = est_in
+        job.output_tokens = est_out
+        job.tokens_used = est_in + est_out
         job.status = "ready"
         job.updated_at = datetime.now(timezone.utc)
         session.add(job)
@@ -119,14 +106,16 @@ def run_chapter_ai(
 
     model = model_for_plan(user.plan)
     try:
-        text, tokens = _chat_completion(
+        text, usage = _chat_completion(
             model=model,
             system=system,
             user_prompt=user_prompt,
             temperature=0.85 if action in {"generate", "start", "continue"} else 0.7,
         )
         job.result_text = text
-        job.tokens_used = tokens
+        job.input_tokens = usage.get("input_tokens", 0)
+        job.output_tokens = usage.get("output_tokens", 0)
+        job.tokens_used = usage.get("total_tokens", 0)
         job.status = "ready"
     except Exception as exc:  # noqa: BLE001
         job.status = "failed"
@@ -150,7 +139,6 @@ def iter_chapter_ai_stream(
     selection: str = "",
 ):
     """Yield SSE-ready dicts: delta / done / error. Persists AiJob when finished."""
-    assert_quota(session, user)
     locale = normalize_locale(book.locale)
     language = LOCALE_NAMES.get(locale, "English")
     system, user_prompt = _prompts_for_action(
@@ -162,11 +150,20 @@ def iter_chapter_ai_stream(
         selection=selection,
         language=language,
     )
+    model = model_for_plan(user.plan)
+    assert_quota(
+        session,
+        user,
+        prompt_texts=(system, user_prompt),
+    )
 
     job = AiJob(
         book_id=book.id,
         user_id=user.id,
         chapter_id=chapter_id,
+        job_type="chapter",
+        action=action,
+        model=model,
         status="processing",
         prompt=user_prompt,
         locale=locale,
@@ -177,49 +174,67 @@ def iter_chapter_ai_stream(
     session.commit()
     session.refresh(job)
     job_id = job.id
+    quota = quota_info(session, user)
 
-    yield {"type": "start", "job_id": job_id}
+    yield {"type": "start", "job_id": job_id, "quota": quota}
 
     parts: list[str] = []
+    usage: dict[str, int] = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
     try:
         if not settings.llm_live_enabled:
             result = _offline_result(action, prompt, selection, language, book.title)
-            # Simulate streaming so the UI can show progressive inserts.
             chunk = 24
             for i in range(0, len(result), chunk):
                 piece = result[i : i + chunk]
                 parts.append(piece)
                 yield {"type": "delta", "text": piece}
-            tokens = max(1, len(result.split()))
+            usage = {
+                "input_tokens": estimate_tokens(system, user_prompt),
+                "output_tokens": max(1, len(result.split())),
+                "total_tokens": estimate_tokens(system, user_prompt) + max(1, len(result.split())),
+            }
         else:
-            model = model_for_plan(user.plan)
             temperature = 0.85 if action in {"generate", "start", "continue"} else 0.7
-            tokens = 0
             for piece in _chat_completion_stream(
                 model=model,
                 system=system,
                 user_prompt=user_prompt,
                 temperature=temperature,
+                usage_out=usage,
             ):
                 parts.append(piece)
                 yield {"type": "delta", "text": piece}
-            text = "".join(parts).strip()
-            tokens = max(1, len(text.split()))
 
         text = "".join(parts).strip()
         if not text:
             raise RuntimeError("LLM returned empty content.")
 
+        if usage["total_tokens"] <= 0:
+            usage["input_tokens"] = estimate_tokens(system, user_prompt)
+            usage["output_tokens"] = max(1, len(text.split()))
+            usage["total_tokens"] = usage["input_tokens"] + usage["output_tokens"]
+
         job = session.get(AiJob, job_id)
         if job:
             job.result_text = text
-            job.tokens_used = tokens
+            job.input_tokens = usage["input_tokens"]
+            job.output_tokens = usage["output_tokens"]
+            job.tokens_used = usage["total_tokens"]
             job.status = "ready"
             job.updated_at = datetime.now(timezone.utc)
             session.add(job)
             session.commit()
 
-        yield {"type": "done", "job_id": job_id, "tokens_used": tokens, "text": text}
+        quota_after = quota_info(session, user)
+        yield {
+            "type": "done",
+            "job_id": job_id,
+            "tokens_used": usage["total_tokens"],
+            "input_tokens": usage["input_tokens"],
+            "output_tokens": usage["output_tokens"],
+            "text": text,
+            "quota": quota_after,
+        }
     except Exception as exc:  # noqa: BLE001
         job = session.get(AiJob, job_id)
         if job:
@@ -243,11 +258,13 @@ def _prompts_for_action(
 ) -> tuple[str, str]:
     profile = style_profile_from_book(book)
     style_block = profile.to_prompt_block(language)
-    prior_block = prior_chapters_context(
+    context_block = build_writing_context(
         session,
-        book_id=book.id,
+        book=book,
         chapter_id=chapter_id,
         profile=profile,
+        selection=selection,
+        action=action,
     )
     system_parts = [
         "You are a warm, practical literary coach helping authors write books.",
@@ -269,7 +286,7 @@ def _prompts_for_action(
         language,
         book_title=book.title,
         book_author=book.author,
-        prior_context=prior_block,
+        context_block=context_block,
     )
     return system, user_prompt
 
@@ -282,7 +299,7 @@ def _chat_completion(
     temperature: float,
     timeout: float | None = None,
     max_tokens: int | None = None,
-) -> tuple[str, int]:
+) -> tuple[str, dict[str, int]]:
     url = f"{settings.resolved_llm_base_url}/chat/completions"
     api_key = settings.resolved_llm_api_key
     if not api_key:
@@ -333,9 +350,21 @@ def _chat_completion(
     text = (message.get("content") or "").strip()
     if not text:
         raise RuntimeError("LLM returned empty content.")
-    usage = payload.get("usage") or {}
-    tokens = int(usage.get("total_tokens") or max(1, len(text.split())))
-    return text, tokens
+    usage_raw = payload.get("usage") or {}
+    input_t = int(usage_raw.get("prompt_tokens") or 0)
+    output_t = int(usage_raw.get("completion_tokens") or 0)
+    total_t = int(usage_raw.get("total_tokens") or 0)
+    if total_t <= 0:
+        total_t = input_t + output_t
+    if total_t <= 0:
+        total_t = max(1, len(text.split()))
+        input_t = estimate_tokens(system, user_prompt)
+        output_t = max(1, total_t - input_t)
+    return text, {
+        "input_tokens": input_t,
+        "output_tokens": output_t,
+        "total_tokens": total_t,
+    }
 
 
 def _chat_completion_stream(
@@ -344,6 +373,7 @@ def _chat_completion_stream(
     system: str,
     user_prompt: str,
     temperature: float,
+    usage_out: dict[str, int] | None = None,
 ):
     """Yield text deltas from an OpenAI-compatible streaming chat completion."""
     import json
@@ -367,6 +397,7 @@ def _chat_completion_stream(
         ],
         "temperature": temperature,
         "stream": True,
+        "stream_options": {"include_usage": True},
     }
 
     with httpx.Client(timeout=settings.llm_timeout_seconds) as client:
@@ -391,6 +422,17 @@ def _chat_completion_stream(
                     payload = json.loads(data)
                 except json.JSONDecodeError:
                     continue
+
+                usage_raw = payload.get("usage")
+                if usage_out is not None and isinstance(usage_raw, dict):
+                    input_t = int(usage_raw.get("prompt_tokens") or 0)
+                    output_t = int(usage_raw.get("completion_tokens") or 0)
+                    total_t = int(usage_raw.get("total_tokens") or 0)
+                    if total_t > 0 or input_t > 0 or output_t > 0:
+                        usage_out["input_tokens"] = input_t
+                        usage_out["output_tokens"] = output_t
+                        usage_out["total_tokens"] = total_t or (input_t + output_t)
+
                 choices = payload.get("choices") or []
                 if not choices:
                     continue
@@ -409,12 +451,14 @@ def _build_user_prompt(
     book_title: str = "",
     book_author: str = "",
     prior_context: str = "",
+    context_block: str = "",
 ) -> str:
     book_line = f'Book title: "{book_title}". Author: "{book_author or "unknown"}".'
-    context_block = f"\n\n{prior_context}" if prior_context else ""
+    ctx = context_block or prior_context
+    context_section = f"\n\n{ctx}" if ctx else ""
     if action == "start":
         return (
-            f"{book_line}{context_block}\n"
+            f"{book_line}{context_section}\n"
             f"A beginner wants to start their first chapter in {language}.\n"
             f"Idea / synopsis:\n{prompt}\n\n"
             "Write Chapter 1 as readable prose (800–1200 words if possible), "
@@ -422,68 +466,72 @@ def _build_user_prompt(
         )
     if action == "outline":
         return (
-            f"{book_line}{context_block}\n"
+            f"{book_line}{context_section}\n"
             f"Create a simple chapter outline in {language} for this book idea:\n{prompt}\n\n"
             "Return 6–10 numbered chapter titles with one short sentence each. "
             "Keep it friendly for a first-time author."
         )
     if action == "generate":
         return (
-            f"{book_line}{context_block}\n"
+            f"{book_line}{context_section}\n"
             f"Write a new chapter section in {language}.\nBrief from the author:\n{prompt}"
         )
     if action == "continue":
+        tail = "" if context_section else f"\n\nContext:\n{selection or prompt}"
         return (
-            f"{book_line}{context_block}\n"
-            f"Continue this manuscript naturally in {language}, matching established voice.\n\n"
-            f"Context:\n{selection or prompt}\n\n"
+            f"{book_line}{context_section}\n"
+            f"Continue this manuscript naturally in {language}, matching established voice."
+            f"{tail}\n\n"
             "Write the next 2–4 paragraphs only."
         )
     if action == "rewrite":
+        passage = "" if context_section else f"\n\nSelection:\n{selection}"
         return (
-            f"{book_line}{context_block}\n"
+            f"{book_line}{context_section}\n"
             f"Rewrite the selection in {language}, improving clarity and rhythm "
-            f"without changing plot.\n\nSelection:\n{selection}\n\nNotes: {prompt}"
+            f"without changing plot.{passage}\n\nNotes: {prompt}"
         )
     if action == "tone":
+        passage = "" if context_section else f"\n\nSelection:\n{selection}"
         return (
-            f"{book_line}{context_block}\n"
+            f"{book_line}{context_section}\n"
             f"Adjust the tone of the selection in {language}. "
-            f"Desired tone: {prompt or 'warmer and clearer'}\n\n"
-            f"Selection:\n{selection}"
+            f"Desired tone: {prompt or 'warmer and clearer'}.{passage}"
         )
     if action == "dialogue":
+        passage = "" if context_section else f"\n\nPassage:\n{selection or prompt}"
         return (
-            f"{book_line}{context_block}\n"
-            f"Improve or add natural dialogue in {language} for this passage.\n\n"
-            f"Passage:\n{selection or prompt}\n\n"
+            f"{book_line}{context_section}\n"
+            f"Improve or add natural dialogue in {language} for this passage.{passage}\n\n"
             "Return the revised passage only."
         )
     if action == "simplify":
+        passage = "" if context_section else f"\n\nPassage:\n{selection or prompt}"
         return (
-            f"{book_line}{context_block}\n"
-            f"Rewrite this passage in simpler, clearer {language} for a general reader.\n\n"
-            f"Passage:\n{selection or prompt}"
+            f"{book_line}{context_section}\n"
+            f"Rewrite this passage in simpler, clearer {language} for a general reader.{passage}"
         )
     if action == "consistent":
+        passage = "" if context_section else f"\n\nSelection:\n{selection or prompt}"
         return (
-            f"{book_line}{context_block}\n"
+            f"{book_line}{context_section}\n"
             f"Revise the selection in {language} so it matches the book's established "
             "voice, POV, tone, and continuity with earlier chapters.\n"
-            "Preserve plot facts and character names. Improve only diction, rhythm, and consistency.\n\n"
-            f"Selection:\n{selection or prompt}\n\n"
+            "Preserve plot facts and character names. Improve only diction, rhythm, and consistency."
+            f"{passage}\n\n"
             f"Author notes (optional): {prompt or '(none)'}"
         )
     if action == "finalize":
+        chapter_text = "" if context_section else f"\n\nChapter text so far:\n{selection or prompt}"
         return (
-            f"{book_line}{context_block}\n"
+            f"{book_line}{context_section}\n"
             f"Read the chapter text below carefully in {language}. "
             "Write a satisfying chapter ending (desfecho) that resolves the emotional beat "
             "of this chapter, closes the scene, and leaves a soft hook for what may come next—"
             "without starting a new chapter title.\n\n"
             "Return only the concluding paragraphs (about 2–5), ready to append at the end.\n\n"
-            f"Author notes (optional): {prompt or '(none)'}\n\n"
-            f"Chapter text so far:\n{selection or prompt}"
+            f"Author notes (optional): {prompt or '(none)'}"
+            f"{chapter_text}"
         )
     return prompt
 

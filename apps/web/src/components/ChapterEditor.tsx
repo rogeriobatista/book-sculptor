@@ -37,7 +37,9 @@ import {
   type ChapterSection,
 } from "@/lib/chapter-structure";
 import { streamAiChapter } from "@/lib/ai-stream";
+import { createEditorStreamWriter } from "@/lib/editor-stream";
 import { bookStyleFromBook, isBookStyleConfigured } from "@/lib/book-style";
+import type { AiQuota } from "@/lib/use-ai-quota";
 import {
   applyCritiqueHighlights,
   CritiqueHighlight,
@@ -77,26 +79,14 @@ type Props = {
   chapter: Chapter;
   chapters: Chapter[];
   canUseAi: boolean;
+  aiQuota?: AiQuota;
+  onQuotaChange?: (quota: AiQuota) => void;
   canEdit?: boolean;
   onSelectChapter: (id: string) => void;
   onSaved?: (chapter: Chapter) => void;
   onTitleSaved?: (chapter: Chapter) => void;
   workspaceMode?: "write" | "review";
 };
-
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
-function insertStreamDelta(editor: NonNullable<ReturnType<typeof useEditor>>, delta: string) {
-  if (!delta) return;
-  const html = escapeHtml(delta).replace(/\n/g, "<br>");
-  editor.chain().focus("end").insertContent(html).run();
-}
 
 function jumpToSection(
   editor: NonNullable<ReturnType<typeof useEditor>>,
@@ -121,6 +111,8 @@ export function ChapterEditor({
   chapter,
   chapters,
   canUseAi,
+  aiQuota,
+  onQuotaChange,
   canEdit = true,
   onSelectChapter,
   onSaved,
@@ -509,6 +501,10 @@ export function ChapterEditor({
       toast.info(t("upgradeAi"));
       return;
     }
+    if (aiQuota?.exceeded) {
+      toast.error(t("aiQuotaExceeded"));
+      return;
+    }
 
     setToolsOpen(true);
     setToolsTab("ai");
@@ -533,7 +529,7 @@ export function ChapterEditor({
     const context =
       action === "finalize"
         ? fullText.slice(-12000)
-        : selection || fullText.slice(-1600);
+        : selection || fullText.slice(-8000);
 
     const userLabel =
       action === "generate"
@@ -555,13 +551,10 @@ export function ChapterEditor({
       Boolean(selection) &&
       ["rewrite", "tone", "dialogue", "simplify", "consistent"].includes(action);
 
-    if (replaceSelection) {
-      editor.chain().focus().deleteSelection().run();
-    } else if (!fullText) {
-      editor.chain().focus("start").clearContent().run();
-    } else {
-      editor.chain().focus("end").run();
-    }
+    const streamWriter = createEditorStreamWriter(editor, {
+      replaceSelection,
+      startEmpty: !replaceSelection && !fullText,
+    });
 
     let assembled = "";
     try {
@@ -578,7 +571,7 @@ export function ChapterEditor({
         (event) => {
           if (event.type === "delta") {
             assembled += event.text;
-            insertStreamDelta(editor, event.text);
+            streamWriter.append(event.text);
             setChat((prev) =>
               prev.map((item) =>
                 item.id === assistantId
@@ -586,9 +579,13 @@ export function ChapterEditor({
                   : item,
               ),
             );
+          } else if (event.type === "start" && event.quota) {
+            onQuotaChange?.(event.quota);
           } else if (event.type === "error") {
             throw new Error(event.error || t("aiFailed"));
           } else if (event.type === "done") {
+            streamWriter.finish();
+            if (event.quota) onQuotaChange?.(event.quota);
             setChat((prev) =>
               prev.map((item) =>
                 item.id === assistantId
@@ -613,8 +610,14 @@ export function ChapterEditor({
       toast.success(action === "finalize" ? t("aiFinalized") : t("aiDone"));
       if (action === "generate") setAiPrompt("");
     } catch (err) {
+      streamWriter.abort();
       if ((err as Error)?.name === "AbortError") return;
       const message = err instanceof Error ? err.message : t("aiFailed");
+      if (message.includes("quota") || message.includes("402")) {
+        toast.error(t("aiQuotaExceeded"), message);
+      } else {
+        toast.error(t("aiFailed"), message);
+      }
       setChat((prev) =>
         prev.map((item) =>
           item.id === assistantId
@@ -622,7 +625,6 @@ export function ChapterEditor({
             : item,
         ),
       );
-      toast.error(t("aiFailed"), message);
       setStatus("error");
     } finally {
       setAiBusy(false);
@@ -759,6 +761,7 @@ export function ChapterEditor({
                 canUseAi={canUseAi}
                 canEdit={canEdit}
                 styleConfigured={styleConfigured}
+                quota={aiQuota}
                 chatEndRef={chatEndRef}
                 onPromptChange={setAiPrompt}
                 onRun={(action, prompt) => void runAi(action, prompt)}
