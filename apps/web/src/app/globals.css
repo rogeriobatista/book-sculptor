@@ -4900,9 +4900,18 @@ html[data-theme="dark"] .pricing-footer-cta {
 
 .modal-actions {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 0.6rem;
+  align-items: center;
+  gap: 0.65rem;
   margin-top: 1.1rem;
+}
+
+.modal-actions .btn {
+  position: static;
+  flex: 0 0 auto;
+  min-width: 6.5rem;
+  margin: 0;
 }
 
 .modal-card-confirm {
@@ -5323,12 +5332,142 @@ html[data-theme="dark"] .pricing-footer-cta {
 }
 
 .studio-review-banner {
-  margin: 0 0 0.5rem;
-  padding: 0.55rem 0.75rem;
-  border-radius: 0.45rem;
-  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  margin: 0 0 0.65rem;
+  padding: 0.7rem 0.85rem;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem 1rem;
+}
+
+.studio-review-banner strong {
+  display: block;
+  font-size: var(--text-sm);
+  margin-bottom: 0.15rem;
+}
+
+.studio-review-banner p {
+  margin: 0;
+  font-size: var(--text-xs);
+  max-width: 42rem;
+}
+
+.write-workspace[data-workspace-mode="review"] .editor-chrome {
+  border-bottom-color: color-mix(in srgb, var(--accent) 35%, var(--rule));
+}
+
+.write-workspace[data-workspace-mode="review"] .manuscript-page {
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--accent) 4%, var(--manuscript-bg)) 0%,
+      var(--manuscript-bg) 8rem
+    );
+}
+
+.critique-setup {
+  border: 1px solid color-mix(in srgb, var(--rule) 60%, transparent);
+  border-radius: var(--radius-sm);
+  padding: 0.55rem 0.7rem;
+  background: color-mix(in srgb, var(--input-bg) 55%, transparent);
+}
+
+.critique-setup__summary {
+  cursor: pointer;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  list-style: none;
+}
+
+.critique-setup__summary::-webkit-details-marker {
+  display: none;
+}
+
+.critique-setup[open] .critique-setup__summary {
+  margin-bottom: 0.65rem;
+}
+
+.critique-setup .critique-fieldset,
+.critique-setup .btn {
+  margin-top: 0.55rem;
+}
+
+.critique-nav-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.55rem;
+}
+
+.critique-severity-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.critique-shortcuts {
+  margin: 0;
+  font-size: var(--text-xs);
+}
+
+.critique-finding-bubble {
+  position: fixed;
+  z-index: 60;
+  width: min(20rem, calc(100vw - 1.5rem));
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.75rem;
+  border-radius: var(--radius-md);
+  border: 1px solid color-mix(in srgb, var(--rule) 55%, transparent);
+  background: var(--overlay-bg, var(--surface));
+  color: var(--ink);
+  box-shadow: var(--shadow-lg, 0 16px 40px rgba(0, 0, 0, 0.28));
+}
+
+.critique-finding-bubble__head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+}
+
+.critique-finding-bubble__message {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.4;
+}
+
+.critique-finding-bubble__fix {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: 1.4;
+  padding: 0.4rem 0.5rem;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.critique-finding-bubble__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.review-compose-card {
+  display: grid;
+  gap: 0.65rem;
+  padding: 0.7rem;
+  border-radius: var(--radius-sm);
   border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
-  font-size: 0.86rem;
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+
+.review-empty-compose {
+  display: grid;
+  gap: 0.65rem;
 }
 
 .publication-stage {

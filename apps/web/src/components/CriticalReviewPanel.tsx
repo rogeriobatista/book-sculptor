@@ -45,6 +45,7 @@ const CATEGORIES = [
 ] as const;
 
 export type CritiqueFilterKey = "all" | (typeof CATEGORIES)[number];
+export type CritiqueSeverityFilter = "all" | "minor" | "moderate" | "major";
 
 type Props = {
   bookId: string;
@@ -64,6 +65,7 @@ type Props = {
   onFindingsChange?: (findings: CriticalFinding[]) => void;
   onActiveFindingChange?: (findingId: string | null) => void;
   onApplyFix?: (finding: CriticalFinding) => boolean | Promise<boolean>;
+  onOpenChapter?: (chapterId: string) => void;
 };
 
 function scoreTone(score: number): "excellent" | "good" | "fair" | "weak" {
@@ -91,12 +93,14 @@ export function CriticalReviewPanel({
   onFindingsChange,
   onActiveFindingChange,
   onApplyFix,
+  onOpenChapter,
 }: Props) {
   const { getToken } = useAppAuth();
   const toast = useToast();
   const t = useTranslations("studio");
   const [scope, setScope] = useState<"chapter" | "book" | "selection">("chapter");
   const [selectedCats, setSelectedCats] = useState<string[]>([...CATEGORIES]);
+  const [severityFilter, setSeverityFilter] = useState<CritiqueSeverityFilter>("all");
   const [busy, setBusy] = useState(false);
   const [hydrating, setHydrating] = useState(false);
   const hydrateGen = useRef(0);
@@ -289,10 +293,18 @@ export function CriticalReviewPanel({
         return;
       }
       dismissFinding(finding.id);
-      toast.success(t("critiqueFixPending"));
+      toast.success(t("critiqueFixApplied"));
     } finally {
       setBusy(false);
     }
+  }
+
+  function dismissAllVisible(ids: string[]) {
+    const next = new Set(dismissed);
+    for (const id of ids) next.add(id);
+    onDismissedChange(next);
+    if (result?.job_id) saveCritiqueDismissed(result.job_id, next);
+    onActiveFindingChange?.(null);
   }
 
   const openFindings = useMemo(
@@ -313,13 +325,61 @@ export function CriticalReviewPanel({
     return counts;
   }, [openFindings]);
 
-  const visibleFindings = useMemo(
-    () =>
+  const visibleFindings = useMemo(() => {
+    let list =
       filter === "all"
         ? openFindings
-        : openFindings.filter((f) => f.category === filter),
-    [filter, openFindings],
+        : openFindings.filter((f) => f.category === filter);
+    if (severityFilter !== "all") {
+      list = list.filter((f) => f.severity === severityFilter);
+    }
+    const weight = { major: 0, moderate: 1, minor: 2 } as const;
+    return [...list].sort(
+      (a, b) => weight[a.severity] - weight[b.severity] || a.category.localeCompare(b.category),
+    );
+  }, [filter, openFindings, severityFilter]);
+
+  const activeIndex = useMemo(
+    () => visibleFindings.findIndex((f) => f.id === activeFindingId),
+    [activeFindingId, visibleFindings],
   );
+
+  function goFinding(delta: number) {
+    if (!visibleFindings.length) return;
+    const start = activeIndex < 0 ? (delta > 0 ? -1 : 0) : activeIndex;
+    const next =
+      (start + delta + visibleFindings.length * 10) % visibleFindings.length;
+    const finding = visibleFindings[next];
+    if (!finding) return;
+    onActiveFindingChange?.(finding.id);
+    const canActHere = !finding.chapter_id || finding.chapter_id === chapterId;
+    if (canActHere) onJumpToQuote(finding.quote);
+    else if (finding.chapter_id && onOpenChapter) onOpenChapter(finding.chapter_id);
+    requestAnimationFrame(() => {
+      document
+        .getElementById(`critique-finding-${finding.id}`)
+        ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
+  }
+
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      const tag = (event.target as HTMLElement | null)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if ((event.target as HTMLElement | null)?.isContentEditable) return;
+      if (!result || !visibleFindings.length) return;
+      if (event.key === "j" || event.key === "ArrowDown") {
+        event.preventDefault();
+        goFinding(1);
+      } else if (event.key === "k" || event.key === "ArrowUp") {
+        event.preventDefault();
+        goFinding(-1);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [result, visibleFindings, activeIndex, chapterId]);
 
   const score = result?.score ?? (result ? 100 : null);
   const tone = score == null ? null : scoreTone(score);
@@ -334,71 +394,76 @@ export function CriticalReviewPanel({
 
   return (
     <div className="critical-review-panel">
-      <p className="editor-tools-tip">{t("critiqueLead")}</p>
+      {!result ? <p className="editor-tools-tip">{t("critiqueLead")}</p> : null}
 
-      <fieldset className="critique-fieldset">
-        <legend>{t("critiqueScopeLabel")}</legend>
-        <div className="critique-scope">
-          <label>
-            <input
-              type="radio"
-              name="critique-scope"
-              checked={scope === "chapter"}
-              onChange={() => setScope("chapter")}
-              disabled={busy}
-            />
-            {t("critiqueScopeChapter")}
-          </label>
-          <label>
-            <input
-              type="radio"
-              name="critique-scope"
-              checked={scope === "book"}
-              onChange={() => setScope("book")}
-              disabled={busy}
-            />
-            {t("critiqueScopeBook")}
-          </label>
-          {selectionQuote.trim() ? (
+      <details className="critique-setup" open={!result}>
+        <summary className="critique-setup__summary">
+          {result ? t("critiqueRunAgain") : t("critiqueSetupTitle")}
+        </summary>
+        <fieldset className="critique-fieldset">
+          <legend>{t("critiqueScopeLabel")}</legend>
+          <div className="critique-scope">
             <label>
               <input
                 type="radio"
                 name="critique-scope"
-                checked={scope === "selection"}
-                onChange={() => setScope("selection")}
+                checked={scope === "chapter"}
+                onChange={() => setScope("chapter")}
                 disabled={busy}
               />
-              {t("critiqueScopeSelection")}
+              {t("critiqueScopeChapter")}
             </label>
-          ) : null}
-        </div>
-      </fieldset>
-
-      <fieldset className="critique-fieldset">
-        <legend>{t("critiqueCategoriesLabel")}</legend>
-        <div className="critique-categories">
-          {CATEGORIES.map((cat) => (
-            <label key={cat} className="critique-cat">
+            <label>
               <input
-                type="checkbox"
-                checked={selectedCats.includes(cat)}
-                onChange={() => toggleCategory(cat)}
+                type="radio"
+                name="critique-scope"
+                checked={scope === "book"}
+                onChange={() => setScope("book")}
                 disabled={busy}
               />
-              {t(`critiqueCat_${cat}`)}
+              {t("critiqueScopeBook")}
             </label>
-          ))}
-        </div>
-      </fieldset>
+            {selectionQuote.trim() ? (
+              <label>
+                <input
+                  type="radio"
+                  name="critique-scope"
+                  checked={scope === "selection"}
+                  onChange={() => setScope("selection")}
+                  disabled={busy}
+                />
+                {t("critiqueScopeSelection")}
+              </label>
+            ) : null}
+          </div>
+        </fieldset>
 
-      <button
-        type="button"
-        className="btn btn-primary"
-        disabled={busy || selectedCats.length === 0}
-        onClick={() => void runReview()}
-      >
-        {busy ? t("critiqueRunning") : t("critiqueRun")}
-      </button>
+        <fieldset className="critique-fieldset">
+          <legend>{t("critiqueCategoriesLabel")}</legend>
+          <div className="critique-categories">
+            {CATEGORIES.map((cat) => (
+              <label key={cat} className="critique-cat">
+                <input
+                  type="checkbox"
+                  checked={selectedCats.includes(cat)}
+                  onChange={() => toggleCategory(cat)}
+                  disabled={busy}
+                />
+                {t(`critiqueCat_${cat}`)}
+              </label>
+            ))}
+          </div>
+        </fieldset>
+
+        <button
+          type="button"
+          className="btn btn-primary"
+          disabled={busy || selectedCats.length === 0}
+          onClick={() => void runReview()}
+        >
+          {busy ? t("critiqueRunning") : t("critiqueRun")}
+        </button>
+      </details>
 
       {hydrating && !result ? (
         <p className="muted">{t("critiqueRestoring")}</p>
@@ -426,36 +491,89 @@ export function CriticalReviewPanel({
           </div>
 
           {openFindings.length > 0 ? (
-            <div className="critique-filters" role="tablist" aria-label={t("critiqueFiltersLabel")}>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={filter === "all"}
-                className="critique-filter-pill"
-                data-active={filter === "all"}
-                onClick={() => onFilterChange("all")}
-              >
-                {t("critiqueFilterAll")} ({filterCounts.all})
-              </button>
-              {CATEGORIES.map((cat) => {
-                const count = filterCounts[cat] || 0;
-                if (!count) return null;
-                return (
-                  <button
-                    key={cat}
-                    type="button"
-                    role="tab"
-                    aria-selected={filter === cat}
-                    className="critique-filter-pill"
-                    data-cat={cat}
-                    data-active={filter === cat}
-                    onClick={() => onFilterChange(cat)}
-                  >
-                    {t(`critiqueCat_${cat}`)} ({count})
-                  </button>
-                );
-              })}
-            </div>
+            <>
+              <div className="critique-nav-bar">
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-compact"
+                  disabled={!visibleFindings.length}
+                  onClick={() => goFinding(-1)}
+                >
+                  {t("critiquePrevFinding")}
+                </button>
+                <span className="muted">
+                  {t("critiqueFindingOf", {
+                    current: activeIndex >= 0 ? activeIndex + 1 : 0,
+                    total: visibleFindings.length,
+                  })}
+                </span>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-compact"
+                  disabled={!visibleFindings.length}
+                  onClick={() => goFinding(1)}
+                >
+                  {t("critiqueNextFinding")}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-compact"
+                  disabled={!visibleFindings.length || busy}
+                  onClick={() => dismissAllVisible(visibleFindings.map((f) => f.id))}
+                >
+                  {t("critiqueDismissVisible")}
+                </button>
+              </div>
+
+              <div className="critique-severity-filters" role="group" aria-label={t("critiqueSeverityLabel")}>
+                {(["all", "major", "moderate", "minor"] as CritiqueSeverityFilter[]).map(
+                  (level) => (
+                    <button
+                      key={level}
+                      type="button"
+                      className="critique-filter-pill"
+                      data-active={severityFilter === level}
+                      onClick={() => setSeverityFilter(level)}
+                    >
+                      {level === "all"
+                        ? t("critiqueFilterAll")
+                        : t(`critiqueSeverity_${level}`)}
+                    </button>
+                  ),
+                )}
+              </div>
+
+              <div className="critique-filters" role="tablist" aria-label={t("critiqueFiltersLabel")}>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={filter === "all"}
+                  className="critique-filter-pill"
+                  data-active={filter === "all"}
+                  onClick={() => onFilterChange("all")}
+                >
+                  {t("critiqueFilterAll")} ({filterCounts.all})
+                </button>
+                {CATEGORIES.map((cat) => {
+                  const count = filterCounts[cat] || 0;
+                  if (!count) return null;
+                  return (
+                    <button
+                      key={cat}
+                      type="button"
+                      role="tab"
+                      aria-selected={filter === cat}
+                      className="critique-filter-pill"
+                      data-cat={cat}
+                      data-active={filter === cat}
+                      onClick={() => onFilterChange(cat)}
+                    >
+                      {t(`critiqueCat_${cat}`)} ({count})
+                    </button>
+                  );
+                })}
+              </div>
+            </>
           ) : null}
 
           {visibleFindings.length === 0 ? (
@@ -481,6 +599,9 @@ export function CriticalReviewPanel({
                       onClick={() => {
                         onActiveFindingChange?.(finding.id);
                         if (canActHere) onJumpToQuote(finding.quote);
+                        else if (finding.chapter_id && onOpenChapter) {
+                          onOpenChapter(finding.chapter_id);
+                        }
                       }}
                     >
                       <div className="critique-finding-head">
@@ -506,12 +627,21 @@ export function CriticalReviewPanel({
                       ) : null}
                     </button>
                     <div className="critique-actions">
+                      {!canActHere && finding.chapter_id && onOpenChapter ? (
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-sm"
+                          onClick={() => onOpenChapter(finding.chapter_id!)}
+                        >
+                          {t("critiqueOpenChapter")}
+                        </button>
+                      ) : null}
                       {canActHere && finding.suggested_fix && canEdit && onApplyFix ? (
                         <button
                           type="button"
                           className="btn btn-primary btn-sm"
                           disabled={busy}
-                          onClick={() => handleApplyFix(finding)}
+                          onClick={() => void handleApplyFix(finding)}
                         >
                           {t("critiqueApplyFix")}
                         </button>
@@ -565,6 +695,7 @@ export function CriticalReviewPanel({
               })}
             </ul>
           )}
+          <p className="muted critique-shortcuts">{t("critiqueShortcuts")}</p>
         </div>
       ) : null}
     </div>

@@ -26,6 +26,7 @@ import {
 import { EditorToolsPanel, type EditorToolsTab } from "@/components/EditorToolsPanel";
 import { RichTextToolbar } from "@/components/RichTextToolbar";
 import { TrackChangeBubble } from "@/components/TrackChangeBubble";
+import { CritiqueFindingBubble } from "@/components/CritiqueFindingBubble";
 import { WriteFindBar } from "@/components/WriteFindBar";
 import { WriteSelectionBar } from "@/components/WriteSelectionBar";
 import { WriteStatsBar } from "@/components/WriteStatsBar";
@@ -50,6 +51,7 @@ import {
   readingFindingIdFromEvent,
   stripEditorOverlayMarksFromJson,
 } from "@/lib/critique-highlight";
+import { saveCritiqueDismissed } from "@/lib/critique-session";
 import {
   applyReviewHighlights,
   findQuoteRange,
@@ -201,6 +203,11 @@ export function ChapterEditor({
   const [trackBubbleAnchor, setTrackBubbleAnchor] = useState<{ top: number; left: number } | null>(
     null,
   );
+  const [critiqueBubbleAnchor, setCritiqueBubbleAnchor] = useState<{
+    top: number;
+    left: number;
+  } | null>(null);
+  const [critiqueBubbleBusy, setCritiqueBubbleBusy] = useState(false);
   const [trackBusy, setTrackBusy] = useState(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const skipNextSync = useRef(false);
@@ -212,6 +219,7 @@ export function ChapterEditor({
 
   useEffect(() => {
     setToolsTab(workspaceMode === "review" ? "critique" : "ai");
+    if (workspaceMode === "review") setToolsOpen(true);
   }, [workspaceMode, chapter.id]);
 
   const editorToolTabs: EditorToolsTab[] | undefined =
@@ -272,9 +280,13 @@ export function ChapterEditor({
         if (!findingId) return false;
         setActiveTrackChangeId(null);
         setTrackBubbleAnchor(null);
+        setActiveCritiqueId(findingId);
+        setCritiqueBubbleAnchor({
+          top: event.clientY + 12,
+          left: Math.min(event.clientX, window.innerWidth - 320),
+        });
         setToolsOpen(true);
         setToolsTab("critique");
-        setActiveCritiqueId(findingId);
         const el = document.getElementById(`critique-finding-${findingId}`);
         el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
         return true;
@@ -413,6 +425,28 @@ export function ChapterEditor({
       const range = findQuoteRange(editor.state.doc, quote);
       if (!range) return false;
 
+      editor
+        .chain()
+        .focus()
+        .setTextSelection(range)
+        .insertContent(finding.suggested_fix.trim())
+        .run();
+      setWordCount(countWords(editor.getText()));
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+      await persist(
+        stripEditorOverlayMarksFromJson(editor.getJSON()) as Record<string, unknown>,
+        editor.getText(),
+      );
+      return true;
+    },
+    [editor],
+  );
+
+  const promoteCritiqueAsSuggestion = useCallback(
+    async (finding: CriticalFinding) => {
+      if (!finding.suggested_fix) return;
+      const quote = finding.quote?.trim();
+      if (!quote) return;
       const token = await getToken();
       await clientApiFetch(
         `/api/v1/books/${bookId}/chapters/${chapter.id}/comments`,
@@ -429,9 +463,9 @@ export function ChapterEditor({
       );
       setReviewKey((k) => k + 1);
       setToolsTab("review");
-      return true;
+      toast.success(t("critiquePromoted"));
     },
-    [bookId, chapter.id, editor, getToken, t],
+    [bookId, chapter.id, getToken, t, toast],
   );
 
   const updateTrackChangeStatus = useCallback(
@@ -843,6 +877,11 @@ export function ChapterEditor({
     [activeTrackChangeId, reviewComments],
   );
 
+  const activeCritiqueFinding = useMemo(
+    () => critiqueFindings.find((item) => item.id === activeCritiqueId) ?? null,
+    [activeCritiqueId, critiqueFindings],
+  );
+
   const sessionDelta = wordCount - sessionBase;
   const manuscriptStyle = {
     "--write-font-scale": String(fontScale),
@@ -1022,19 +1061,54 @@ export function ChapterEditor({
 
             <WriteSelectionBar
               hasSelection={Boolean(selectionQuote)}
-              canEdit={canEdit}
-              canUseAi={canUseAi}
               labels={{
-                rewrite: t("chipRewrite"),
-                comment: t("writeCommentSelection"),
+                hint:
+                  workspaceMode === "review"
+                    ? t("reviewSelectionHint")
+                    : t("writeSelectionHint"),
                 clear: t("writeClearSelection"),
-                hint: t("writeSelectionHint"),
               }}
-              onRewrite={() => void runAi("rewrite")}
-              onComment={() => {
-                setToolsOpen(true);
-                setToolsTab("review");
-              }}
+              actions={
+                workspaceMode === "review"
+                  ? [
+                      {
+                        id: "critique",
+                        label: t("reviewCritiqueSelection"),
+                        primary: true,
+                        hidden: !canUseAi,
+                        onClick: () => {
+                          setToolsOpen(true);
+                          setToolsTab("critique");
+                        },
+                      },
+                      {
+                        id: "comment",
+                        label: t("writeCommentSelection"),
+                        hidden: !canEdit,
+                        onClick: () => {
+                          setToolsOpen(true);
+                          setToolsTab("review");
+                        },
+                      },
+                    ]
+                  : [
+                      {
+                        id: "rewrite",
+                        label: t("chipRewrite"),
+                        hidden: !(canUseAi && canEdit),
+                        onClick: () => void runAi("rewrite"),
+                      },
+                      {
+                        id: "comment",
+                        label: t("writeCommentSelection"),
+                        hidden: !canEdit,
+                        onClick: () => {
+                          setToolsOpen(true);
+                          setToolsTab("review");
+                        },
+                      },
+                    ]
+              }
               onClear={() => {
                 setSelectionQuote("");
                 editor?.chain().focus().setTextSelection(editor.state.selection.to).run();
@@ -1096,6 +1170,7 @@ export function ChapterEditor({
                 onFindingsChange={handleCritiqueFindingsChange}
                 onActiveFindingChange={setActiveCritiqueId}
                 onApplyFix={handleApplyCritiqueFix}
+                onOpenChapter={onSelectChapter}
                 onPromoted={() => {
                   setReviewKey((k) => k + 1);
                   setToolsTab("review");
@@ -1144,6 +1219,59 @@ export function ChapterEditor({
             setActiveTrackChangeId(null);
             setTrackBubbleAnchor(null);
           }}
+        />
+      ) : null}
+
+      {activeCritiqueFinding && critiqueBubbleAnchor ? (
+        <CritiqueFindingBubble
+          finding={activeCritiqueFinding}
+          anchor={critiqueBubbleAnchor}
+          canEdit={canEdit}
+          busy={critiqueBubbleBusy}
+          onJump={() => handleJumpToQuote(activeCritiqueFinding.quote)}
+          onApply={() => {
+            setCritiqueBubbleBusy(true);
+            void handleApplyCritiqueFix(activeCritiqueFinding)
+              .then((ok) => {
+                if (ok) {
+                  const next = new Set(critiqueDismissed);
+                  next.add(activeCritiqueFinding.id);
+                  setCritiqueDismissed(next);
+                  if (critiqueResult?.job_id) {
+                    saveCritiqueDismissed(critiqueResult.job_id, next);
+                  }
+                  setCritiqueBubbleAnchor(null);
+                  toast.success(t("critiqueFixApplied"));
+                } else {
+                  toast.error(t("reviewPassageNotFound"));
+                }
+              })
+              .finally(() => setCritiqueBubbleBusy(false));
+          }}
+          onSuggest={() => {
+            setCritiqueBubbleBusy(true);
+            void promoteCritiqueAsSuggestion(activeCritiqueFinding)
+              .catch((err) =>
+                toast.error(
+                  err instanceof Error ? err.message : t("critiquePromoteFailed"),
+                ),
+              )
+              .finally(() => {
+                setCritiqueBubbleBusy(false);
+                setCritiqueBubbleAnchor(null);
+              });
+          }}
+          onDismiss={() => {
+            const next = new Set(critiqueDismissed);
+            next.add(activeCritiqueFinding.id);
+            setCritiqueDismissed(next);
+            if (critiqueResult?.job_id) {
+              saveCritiqueDismissed(critiqueResult.job_id, next);
+            }
+            setCritiqueBubbleAnchor(null);
+            setActiveCritiqueId(null);
+          }}
+          onClose={() => setCritiqueBubbleAnchor(null)}
         />
       ) : null}
     </div>

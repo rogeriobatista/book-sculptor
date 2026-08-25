@@ -243,106 +243,109 @@ export function ChapterReviewPanel({
 
       {tab === "comments" ? (
         <div className="chapter-review-body">
-          <ol className="review-steps" aria-label={t("reviewStepsLabel")}>
-            <li data-done={selectionQuote ? "true" : "false"}>
-              <span className="review-step-num">1</span>
-              {t("reviewStepSelect")}
-            </li>
-            <li data-done={draft.trim() ? "true" : "false"}>
-              <span className="review-step-num">2</span>
-              {t("reviewStepWrite")}
-            </li>
-            <li>
-              <span className="review-step-num">3</span>
-              {t("reviewStepSubmit")}
-            </li>
-          </ol>
-
           {selectionQuote ? (
-            <blockquote className="review-selection">
-              <span className="field-label">{t("reviewSelectedPassage")}</span>
-              “{selectionQuote.slice(0, 220)}
-              {selectionQuote.length > 220 ? "…" : ""}”
-              <button
-                type="button"
-                className="btn btn-ghost btn-compact review-clear-selection"
-                onClick={onClearSelection}
-              >
-                {t("reviewClearSelection")}
-              </button>
-            </blockquote>
+            <div className="review-compose-card">
+              <blockquote className="review-selection">
+                <span className="field-label">{t("reviewSelectedPassage")}</span>
+                “{selectionQuote.slice(0, 220)}
+                {selectionQuote.length > 220 ? "…" : ""}”
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-compact review-clear-selection"
+                  onClick={onClearSelection}
+                >
+                  {t("reviewClearSelection")}
+                </button>
+              </blockquote>
+
+              <div className="review-mode" role="radiogroup" aria-label={t("reviewModeLabel")}>
+                <label className="review-mode-option" data-active={mode === "comment"}>
+                  <input
+                    type="radio"
+                    name="review-mode"
+                    checked={mode === "comment"}
+                    onChange={() => setMode("comment")}
+                  />
+                  <span>
+                    <strong>{t("reviewComment")}</strong>
+                    <span className="muted">{t("reviewCommentDesc")}</span>
+                  </span>
+                </label>
+                <label
+                  className="review-mode-option"
+                  data-active={mode === "suggestion"}
+                  data-disabled={!canEdit}
+                >
+                  <input
+                    type="radio"
+                    name="review-mode"
+                    checked={mode === "suggestion"}
+                    onChange={() => setMode("suggestion")}
+                    disabled={!canEdit}
+                  />
+                  <span>
+                    <strong>{t("reviewSuggestion")}</strong>
+                    <span className="muted">{t("reviewSuggestionDesc")}</span>
+                  </span>
+                </label>
+              </div>
+
+              <label className="field-block">
+                <span className="field-label">{t("reviewFeedbackLabel")}</span>
+                <textarea
+                  rows={3}
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  placeholder={t("reviewCommentPlaceholder")}
+                  disabled={busy}
+                />
+              </label>
+              {mode === "suggestion" ? (
+                <label className="field-block">
+                  <span className="field-label">{t("reviewProposedLabel")}</span>
+                  <textarea
+                    rows={2}
+                    value={suggestionText}
+                    onChange={(e) => setSuggestionText(e.target.value)}
+                    placeholder={t("reviewSuggestionPlaceholder")}
+                    disabled={busy}
+                  />
+                </label>
+              ) : null}
+              <div className="editor-tools-actions">
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={
+                    busy ||
+                    !draft.trim() ||
+                    (mode === "suggestion" && !suggestionText.trim())
+                  }
+                  onClick={() => void submitReview()}
+                >
+                  {t("reviewSubmit")}
+                </button>
+              </div>
+            </div>
           ) : (
-            <p className="muted review-hint">{t("reviewSelectHint")}</p>
+            <div className="review-empty-compose">
+              <p className="muted review-hint">{t("reviewSelectHint")}</p>
+              <ol className="review-steps" aria-label={t("reviewStepsLabel")}>
+                <li>
+                  <span className="review-step-num">1</span>
+                  {t("reviewStepSelect")}
+                </li>
+                <li>
+                  <span className="review-step-num">2</span>
+                  {t("reviewStepWrite")}
+                </li>
+                <li>
+                  <span className="review-step-num">3</span>
+                  {t("reviewStepSubmit")}
+                </li>
+              </ol>
+            </div>
           )}
-
-          <div className="review-mode" role="radiogroup" aria-label={t("reviewModeLabel")}>
-            <label className="review-mode-option" data-active={mode === "comment"}>
-              <input
-                type="radio"
-                name="review-mode"
-                checked={mode === "comment"}
-                onChange={() => setMode("comment")}
-              />
-              <span>
-                <strong>{t("reviewComment")}</strong>
-                <span className="muted">{t("reviewCommentDesc")}</span>
-              </span>
-            </label>
-            <label
-              className="review-mode-option"
-              data-active={mode === "suggestion"}
-              data-disabled={!canEdit}
-            >
-              <input
-                type="radio"
-                name="review-mode"
-                checked={mode === "suggestion"}
-                onChange={() => setMode("suggestion")}
-                disabled={!canEdit}
-              />
-              <span>
-                <strong>{t("reviewSuggestion")}</strong>
-                <span className="muted">{t("reviewSuggestionDesc")}</span>
-              </span>
-            </label>
-          </div>
-
-          <label className="field-block">
-            <span className="field-label">{t("reviewFeedbackLabel")}</span>
-            <textarea
-              rows={3}
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              placeholder={t("reviewCommentPlaceholder")}
-              disabled={busy}
-            />
-          </label>
-          {mode === "suggestion" ? (
-            <label className="field-block">
-              <span className="field-label">{t("reviewProposedLabel")}</span>
-              <textarea
-                rows={2}
-                value={suggestionText}
-                onChange={(e) => setSuggestionText(e.target.value)}
-                placeholder={t("reviewSuggestionPlaceholder")}
-                disabled={busy}
-              />
-            </label>
-          ) : null}
-          <div className="editor-tools-actions">
-            <button
-              type="button"
-              className="btn btn-primary"
-              disabled={
-                busy ||
-                !draft.trim() ||
-                (mode === "suggestion" && !suggestionText.trim())
-              }
-              onClick={() => void submitReview()}
-            >
-              {t("reviewSubmit")}
-            </button>
-          </div>
 
           {comments.length > 0 ? (
             <div className="review-thread-head">

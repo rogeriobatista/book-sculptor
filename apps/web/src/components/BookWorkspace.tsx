@@ -578,7 +578,19 @@ export function BookWorkspace({ bookId, locale, tab }: Props) {
           />
           <div className="studio-write-main">
             {view === "review" && chapters.length > 0 ? (
-              <p className="studio-review-banner muted">{s("reviewWorkspaceBanner")}</p>
+              <div className="studio-review-banner" role="status">
+                <div>
+                  <strong>{s("flowReview")}</strong>
+                  <p className="muted">{s("reviewWorkspaceBanner")}</p>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-compact"
+                  onClick={() => goView("write")}
+                >
+                  {s("flowWrite")}
+                </button>
+              </div>
             ) : null}
             {chapters.length === 0 ? (
               <StudioStartPanel
